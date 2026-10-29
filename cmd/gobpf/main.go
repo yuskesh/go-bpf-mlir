@@ -116,6 +116,10 @@ func run(dir, emit string) error {
 	cmd.Stdout, cmd.Stderr = &stderr, &stderr
 	if err := cmd.Run(); err != nil {
 		os.Remove(filepath.Join(res.Dir, outELF))
+		// A stack-limit failure in a function that writes a padded ring event gets a named GB016 first (the likely cause); ebpf-compile's text follows as is.
+		for _, d := range frontend.StackLimitDiagnostics(res, stderr.String()) {
+			fmt.Fprintln(os.Stderr, d.String())
+		}
 		return fmt.Errorf("ebpf-compile rejected %s (%v):\n%s", filepath.Join(res.Dir, outMLIR), err, toolchain.RewriteLocs(stderr.String(), relDir(res.Dir)))
 	}
 	// stderr with rc 0: warnings become Conditionals with Go positions (GB024), and a line of unknown shape stops generation (it used to be discarded).

@@ -30,6 +30,10 @@ var allowedOps = map[string]bool{
 	"ebpf.msg.redirect":       true,
 	"ebpf.sock.map_update":    true,
 	"ebpf.user.read_str":      true,
+	"ebpf.user.read":          true, // RingBuf.OutputBuf (userbuf.go)
+	"ebpf.user.str_at":        true, // UserStrArray.At (strarray.go)
+	"ebpf.tp.field.copy":      true, // q.F = ctx.Event().G — a tracepoint byte array (tpcopy.go)
+	"ebpf.kptr.addr":          true, // bpf.KernelAddr(p) (tpbtf.go)
 	"ebpf.kernel.read_str":    true,
 	"ebpf.sock.map_lookup":    true, // the Assign set
 	"ebpf.sock.ref_check":     true,

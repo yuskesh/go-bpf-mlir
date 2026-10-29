@@ -305,7 +305,7 @@ func (a *analyzer) recordLiteralArgs(body ast.Node) map[*ast.CompositeLit]bool {
 			}
 			return true
 		}
-		if !known || !(e.op == "update" || e.op == "atomic_add" || e.op == "output" || e.op == "output_str" || e.op == "output_str_discard" || e.op == "output_kernel_str" || e.op == "perf_output" || e.op == "lookup" || e.op == "seq_write" || e.op == "sys_bpf" || isStatus) { // including seq_write and sys_bpf
+		if !known || !(e.op == "update" || e.op == "atomic_add" || e.op == "output" || e.op == "output_str" || e.op == "output_str_discard" || e.op == "output_kernel_str" || e.op == "output_buf" || e.op == "perf_output" || e.op == "lookup" || e.op == "seq_write" || e.op == "sys_bpf" || isStatus) { // including seq_write and sys_bpf
 			return true
 		}
 		// the key / value / event position of a map operation (including record keys).

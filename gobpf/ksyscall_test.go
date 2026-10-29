@@ -33,11 +33,34 @@ func TestAttachKsyscallWrapsLiveErrors(t *testing.T) {
 	}
 }
 
-// gobpf's declared ksyscall_attach comes from bpf-mlir's preset cilium-v0.22-ksyscall (the value is prefix, the same as before).
+// gobpf's declared ksyscall_attach and usdt_attach come from bpf-mlir's preset cilium-v0.22-usdt-ksyscall (the values are prefix and ref_ctr, the same as before).
 func TestLoaderDeclKsyscallFromPreset(t *testing.T) {
-	if LoaderDecl.KsyscallAttach != requirements.Cilium022Ksyscall.KsyscallAttach || livecaps.KsyscallLoader.KsyscallAttach != requirements.KsyscallAttachPrefix {
-		t.Fatalf("gobpf.LoaderDecl.KsyscallAttach = %q, preset Cilium022Ksyscall %q, livecaps.KsyscallLoader %q — want all prefix",
-			LoaderDecl.KsyscallAttach, requirements.Cilium022Ksyscall.KsyscallAttach, livecaps.KsyscallLoader.KsyscallAttach)
+	if LoaderDecl.KsyscallAttach != requirements.Cilium022USDTKsyscall.KsyscallAttach || livecaps.KsyscallLoader.KsyscallAttach != requirements.KsyscallAttachPrefix {
+		t.Fatalf("gobpf.LoaderDecl.KsyscallAttach = %q, preset Cilium022USDTKsyscall %q, livecaps.KsyscallLoader %q — want all prefix",
+			LoaderDecl.KsyscallAttach, requirements.Cilium022USDTKsyscall.KsyscallAttach, livecaps.KsyscallLoader.KsyscallAttach)
+	}
+	if LoaderDecl.USDTAttach != requirements.Cilium022USDTKsyscall.USDTAttach || livecaps.USDTLoader.USDTAttach != requirements.USDTAttachRefCtr {
+		t.Fatalf("gobpf.LoaderDecl.USDTAttach = %q, preset Cilium022USDTKsyscall %q, livecaps.USDTLoader %q — want all ref_ctr",
+			LoaderDecl.USDTAttach, requirements.Cilium022USDTKsyscall.USDTAttach, livecaps.USDTLoader.USDTAttach)
+	}
+}
+
+// gobpf's declaration differs from its base, the preset cilium-v0.22-usdt-ksyscall, only in the name, sockmap_attach, lsm_cgroup_load and fsession_load —
+// four fields on the cilium fork build, three on the plain upstream build (fsession_load is none in both).
+func TestLoaderDeclFromUSDTKsyscallPreset(t *testing.T) {
+	want := []string{"Name", "SockmapAttach", "LSMCgroupLoad"}
+	if wantFsessionLoad != requirements.Cilium022USDTKsyscall.FsessionLoad {
+		want = append(want, "FsessionLoad")
+	}
+	got := []string{}
+	a, b := reflect.ValueOf(LoaderDecl), reflect.ValueOf(requirements.Cilium022USDTKsyscall)
+	for i := 0; i < a.NumField(); i++ {
+		if !reflect.DeepEqual(a.Field(i).Interface(), b.Field(i).Interface()) {
+			got = append(got, a.Type().Field(i).Name)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("gobpf.LoaderDecl differs from Cilium022USDTKsyscall in %v, want exactly %v", got, want)
 	}
 }
 

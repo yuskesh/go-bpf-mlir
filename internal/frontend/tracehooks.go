@@ -7,6 +7,7 @@ import (
 	"go/types"
 	"reflect"
 	"regexp"
+	"strings"
 )
 
 // tracepoint, raw_tp, kretprobe, uretprobe (bpf-mlir's tracepoint / raw_tp / probe.retval):
@@ -33,6 +34,23 @@ type TPField struct {
 	GoName string
 	Offset int64
 	Int    IntType
+	Str    bool  // a bpf.UserStr field (a `char *` — the schema's user_str, read only as OutputStr's user string)
+	StrArr bool  // a bpf.UserStrArray field (a `char **` — the schema's user_str_array, read only with At)
+	Arr    int64 // N of a fixed byte array field [N]byte / [N]int8 (Int is the element — the schema's array, copied only with tp.field.copy); 0 otherwise
+}
+
+// tpArrayMax is the upper bound of a tracepoint byte array field (bpf-mlir's tp.field.copy limit).
+const tpArrayMax = 64
+
+// isUserStr reports whether t is bpf.UserStr.
+func isUserStr(t types.Type) bool { return isBpfNamed(t, "UserStr") }
+
+// isUserStrArray reports whether t is bpf.UserStrArray.
+func isUserStrArray(t types.Type) bool { return isBpfNamed(t, "UserStrArray") }
+
+func isBpfNamed(t types.Type, name string) bool {
+	n, ok := t.(*types.Named)
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == bpfPkg && n.Obj().Name() == name
 }
 
 // tpMaxRecord is the readable limit of a tracepoint record (the kernel's PERF_MAX_TRACE_SIZE — the same as bpf-mlir's tp.field verifier).
@@ -84,8 +102,27 @@ func (a *analyzer) tracepointEvent(p *Program, ctxType types.Type) {
 		p.tpTagged[f.Name()] = true // a read of a misshapen field does not report again
 		at := f.Pos()
 		it, isInt := intTypeOf(f.Type())
-		if !isInt || isBoolish(f.Type()) {
-			fail(at, "the tagged field %s.%s has type %s — a tracepoint field read is an 8 / 16 / 32 / 64-bit integer (arrays, structs and __data_loc fields are not readable in this subset)", en.Obj().Name(), f.Name(), f.Type())
+		str, strArr := isUserStr(f.Type()), isUserStrArray(f.Type())
+		if str || strArr {
+			it, isInt = IntType{Bits: 64}, true // the 8-byte pointer (the width of the bounds check below)
+		}
+		var n int64
+		if arr, isArr := f.Type().Underlying().(*types.Array); isArr {
+			et, isElem := intTypeOf(arr.Elem())
+			if !isElem || et.Bits != 8 || isBoolish(arr.Elem()) || arr.Len() < 1 || arr.Len() > tpArrayMax {
+				fail(at, "the tagged array field %s.%s has type %s — a tracepoint array field is a one-dimensional [N]byte or [N]int8 with N 1..%d (copied whole with tp.field.copy)", en.Obj().Name(), f.Name(), f.Type(), tpArrayMax)
+				ok = false
+				continue
+			}
+			if strings.HasPrefix(p.Attach, "syscalls/") {
+				fail(at, "the tagged array field %s.%s is in a syscalls event — the BPF context of syscalls tracepoints has no inline arrays (only the syscall number and the 8-byte arguments)", en.Obj().Name(), f.Name())
+				ok = false
+				continue
+			}
+			it, isInt, n = et, true, arr.Len()
+		}
+		if !isInt || (!str && !strArr && n == 0 && isBoolish(f.Type())) {
+			fail(at, "the tagged field %s.%s has type %s — a tracepoint field read is an 8 / 16 / 32 / 64-bit integer, a [N]byte / [N]int8 array (copied into a record field), a bpf.UserStr (a `char *` user string) or a bpf.UserStrArray (a `char **` array of user strings) (structs and __data_loc fields are not readable in this subset)", en.Obj().Name(), f.Name(), f.Type())
 			ok = false
 			continue
 		}
@@ -101,6 +138,9 @@ func (a *analyzer) tracepointEvent(p *Program, ctxType types.Type) {
 		}
 		seen[name] = true
 		w := int64(it.Bits / 8)
+		if n > 0 {
+			w = n
+		}
 		if offs[i] < 8 {
 			fail(at, "the tagged field %s.%s is at offset %d — the first 8 bytes of a tracepoint record are the common fields, which BPF cannot read (start the struct with `_ [8]byte`)", en.Obj().Name(), f.Name(), offs[i])
 			ok = false
@@ -111,7 +151,7 @@ func (a *analyzer) tracepointEvent(p *Program, ctxType types.Type) {
 			ok = false
 			continue
 		}
-		p.TPFields = append(p.TPFields, TPField{Name: name, GoName: f.Name(), Offset: offs[i], Int: it})
+		p.TPFields = append(p.TPFields, TPField{Name: name, GoName: f.Name(), Offset: offs[i], Int: it, Str: str, StrArr: strArr, Arr: n})
 	}
 	if ok && len(p.TPFields) == 0 {
 		fail(token.NoPos, "the event type %s has no field tagged `tp:\"<name>\"` — tag the fields the program reads (their offsets are checked against the tracefs format at load)", en.Obj().Name())
@@ -143,6 +183,18 @@ func (l *lowerer) tpEventField(e ast.Expr) (value, bool, bool) {
 	}
 	for _, f := range l.prog.TPFields {
 		if f.GoName == sel.Sel.Name {
+			if f.Str {
+				l.fail(Rejected, GB008ProgramShape, sel.Pos(), "%s.%s is a bpf.UserStr (a user string pointer) — it may only be written in place as the second argument of R.OutputStr / R.OutputStrOrDiscard (a user string is not a value)", l.prog.tpEvent.Obj().Name(), f.GoName)
+				return value{}, false, true
+			}
+			if f.StrArr {
+				l.fail(Rejected, GB008ProgramShape, sel.Pos(), "%s.%s is a bpf.UserStrArray (an array of user string pointers) — it may only be At's receiver or bound once with `a := ctx.Event().%s` (an array is not a value)", l.prog.tpEvent.Obj().Name(), f.GoName, f.GoName)
+				return value{}, false, true
+			}
+			if f.Arr > 0 {
+				l.fail(Rejected, GB008ProgramShape, sel.Pos(), "%s.%s is a %d-byte array — it can only be copied whole into a field of the same type of a checked record (`q.F = ctx.Event().%s` — q a checked map borrow or a reservation: tp.field.copy); its elements cannot be read", l.prog.tpEvent.Obj().Name(), f.GoName, f.Arr, f.GoName)
+				return value{}, false, true
+			}
 			r := l.val()
 			t := vtypeOf(f.Int)
 			l.emit("%s = ebpf.tp.field %%ctx %q [%d] : !ebpf.ctx<\"tracepoint\"> -> %s", r, f.Name, f.Offset, t.mlir())

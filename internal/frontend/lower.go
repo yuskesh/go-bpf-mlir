@@ -116,8 +116,12 @@ type lowerer struct {
 	pktGen         int                   // the packet generation (+1 per Adjust — checks for stale windows)
 	lastAdjust     token.Pos             // the position of the last Adjust (for error messages)
 	lastAdjustName string
-	resv           *reservation        // the present arm of the current ring buffer reservation (`if e, ok := M.Reserve(); ok { … }`)
-	resvVars       map[*types.Var]bool // reservation variables e (stops use outside present)
+	resv           *reservation             // the present arm of the current ring buffer reservation (`if e, ok := M.Reserve(); ok { … }`)
+	resvVars       map[*types.Var]bool      // reservation variables e (stops use outside present)
+	strArrs        map[*types.Var]strArr    // UserStrArray variables bound once (strarray.go)
+	strVars        map[*types.Var]string    // UserStr variables from UserStrArray.At (the !ebpf.user_str value — only as OutputStr's argument)
+	okVars         map[*types.Var]strAtFact // present results of UserStrArray.At (the chain — strarray.go)
+	okProven       []strAtFact              // At presents known true here (then arms of `if ok {`, inner last)
 }
 
 type checkedRef struct {
@@ -600,6 +604,9 @@ func (l *lowerer) stmt(s ast.Stmt) {
 		if l.usdtArgAssign(s) { // v, st := bpf.USDTArg[T](ctx, n)
 			return
 		}
+		if l.tpFieldCopy(s) { // q.F = ctx.Event().G — a copy of a tracepoint [N]byte
+			return
+		}
 		if l.reserveAssign(s) { // writes into the reservation: e.F = v, *e = V{…}
 			return
 		}
@@ -664,6 +671,9 @@ func (l *lowerer) localVar(id *ast.Ident, def bool) *types.Var {
 }
 
 func (l *lowerer) setVar(id *ast.Ident, v *types.Var, val value) {
+	if l.strAtReassigned(id, v) {
+		return
+	}
 	if l.borrowOf(v) != nil {
 		l.fail(Rejected, GB005NilCheckShape, id.Pos(), "the checked pointer %s must not be reassigned", id.Name)
 		return
@@ -690,6 +700,20 @@ func (l *lowerer) assign(s *ast.AssignStmt) {
 			l.outputStrAssign(s, call, m, o) // st, ok := R.OutputStr(v, bpf.UprobeStr(ctx, n)), R.OutputStrOrDiscard, R.OutputKernelStr(v, p.F)
 			return
 		}
+	}
+	if len(s.Lhs) == 3 && len(s.Rhs) == 1 {
+		if call, m, isOB := l.isOutputBuf(s.Rhs[0]); isOB {
+			l.outputBufAssign(s, call, m) // st, cnt, ok := R.OutputBuf(v, bpf.UprobeBuf(ctx, n), len) (userbuf.go)
+			return
+		}
+		if call, isAt := l.isStrAtCall(s.Rhs[0]); isAt {
+			l.strAtAssign(s, call) // s, st, ok := a.At(i) (strarray.go)
+			return
+		}
+	}
+	if len(s.Lhs) == 1 && len(s.Rhs) == 1 && isUserStrArray(l.a.info.Types[s.Rhs[0]].Type) {
+		l.strArrBind(s) // a := ctx.Event().F / bpf.KsyscallStrArray(ctx, n)
+		return
 	}
 	switch s.Tok {
 	case token.DEFINE, token.ASSIGN:
@@ -948,6 +972,7 @@ func (l *lowerer) ifStmt(s *ast.IfStmt) {
 	if !ok {
 		return
 	}
+	atFact := l.strAtCond(s.Cond) // `if ok {` of an At present: the then arm may read the next element (strarray.go)
 	before := copyEnv(l.env)
 	l.env = copyEnv(before)
 	l.escaped = false
@@ -956,6 +981,10 @@ func (l *lowerer) ifStmt(s *ast.IfStmt) {
 		if tg != nil {
 			l.rguards = append(l.rguards, tg)
 			defer func() { l.rguards = l.rguards[:len(l.rguards)-1] }()
+		}
+		if atFact != nil {
+			l.okProven = append(l.okProven, *atFact)
+			defer func() { l.okProven = l.okProven[:len(l.okProven)-1] }()
 		}
 		l.stmts(s.Body.List)
 	})
@@ -1064,6 +1093,10 @@ func (l *lowerer) mapCall(call *ast.CallExpr) {
 			helper = "probe_read_kernel_str"
 		}
 		l.fail(Rejected, GB017StatusIgnored, call.Pos(), "the status of %s.%s (the raw %s status) and whether it was submitted are discarded — use them (`st, ok := %s.%s(…)`) or discard explicitly (`_, _ = %s.%s(…)`)", m.Symbol, name, helper, m.Symbol, name, m.Symbol, name)
+		return
+	}
+	if e.op == "output_buf" {
+		l.fail(Rejected, GB017StatusIgnored, call.Pos(), "the status of %s.OutputBuf (the raw probe_read_user status), the clamped count and whether it was submitted are discarded — use them (`st, n, ok := %s.OutputBuf(…)`) or discard explicitly (`_, _, _ = %s.OutputBuf(…)`)", m.Symbol, m.Symbol, m.Symbol)
 		return
 	}
 	if e.op == "redirect_map" || e.op == "redirect_map_if" {
@@ -1593,6 +1626,8 @@ func (l *lowerer) expr(e ast.Expr, want *vtype) (value, bool) {
 			return value{}, false
 		}
 		switch l.callOp(e) {
+		case "kernel_addr":
+			return l.kernelAddr(e)
 		case "lsm_arg":
 			l.fail(Rejected, GB005NilCheckShape, e.Pos(), "bpf.LSMArg returns a pointer that may be NULL — read it only as `if p := bpf.LSMArg[T](ctx, i); p != nil { … }`")
 			return value{}, false
@@ -1623,8 +1658,16 @@ func (l *lowerer) expr(e ast.Expr, want *vtype) (value, bool) {
 			l.fail(Rejected, GB026LockTimerShape, e.Pos(), "bpf.WithLock is a statement (it returns nothing)")
 			return value{}, false
 		}
-		if call, isUS := l.uprobeStrCall(e); isUS { // a user string only as the second argument of OutputStr
-			l.fail(Rejected, GB008ProgramShape, call.Pos(), "bpf.UprobeStr may only be written in place as the second argument of R.OutputStr / R.OutputStrOrDiscard (a user string is not a value — it is read into the event by the helper)")
+		if call, op := l.userStrCall(e); call != nil { // a user string only as the second argument of OutputStr
+			fn := "bpf.UprobeStr"
+			if op == "ksyscall_str" {
+				fn = "bpf.KsyscallStr"
+			}
+			l.fail(Rejected, GB008ProgramShape, call.Pos(), "%s may only be written in place as the second argument of R.OutputStr / R.OutputStrOrDiscard (a user string is not a value — it is read into the event by the helper)", fn)
+			return value{}, false
+		}
+		if l.callOp(e) == "uprobe_buf" { // a user buffer only as the second argument of OutputBuf
+			l.fail(Rejected, GB008ProgramShape, e.Pos(), "bpf.UprobeBuf may only be written in place as the second argument of R.OutputBuf (a user buffer is not a value — it is read into the event by the helper)")
 			return value{}, false
 		}
 		if op := l.adjustOp(e); op != "" {
@@ -1651,6 +1694,11 @@ func (l *lowerer) expr(e ast.Expr, want *vtype) (value, bool) {
 		}
 		l.unsupportedCall(e)
 		return value{}, false
+	}
+	if ix, isIndex := e.(*ast.IndexExpr); isIndex {
+		if _, _, handled := l.tpEventField(ast.Unparen(ix.X)); handled { // an element of a tracepoint array field (tpEventField names the copy form)
+			return value{}, false
+		}
 	}
 	l.fail(Unknown, GB001UnsupportedConstruct, e.Pos(), "expression %T is not in the supported subset", e)
 	return value{}, false

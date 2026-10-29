@@ -4,8 +4,8 @@ package bpf
 
 // TracepointContext is the context of a tracepoint (a tracefs event — `<category>/<event>`) program. E is the event record struct the user declares, and
 // fields with tag `tp:"<tracefs field name>"` are the readable fields (the schema's fields). Offsets are E's Go layout (the same as amd64 C natural alignment), and
-// **the first 8 bytes are the common fields** (not readable from BPF — fill them with `_ [8]byte`). Tagged fields are int8 to int64 / uint8 to uint64 only (match the width and sign to the tracefs format's
-// size and signed). Declaration errors (offset, width or sign mismatches — including a forgotten padding) are stopped with a named error before load by gobpf.Load's check (requirements tpfield —
+// **the first 8 bytes are the common fields** (not readable from BPF — fill them with `_ [8]byte`). Tagged fields are int8 to int64 / uint8 to uint64 (match the width and sign to the tracefs format's
+// size and signed), or bpf.UserStr for a single-level `char *` field (a user string — `ctx.Event().F` only as the second argument of RingBuf.OutputStr / OutputStrOrDiscard). Declaration errors (offset, width or sign mismatches — including a forgotten padding) are stopped with a named error before load by gobpf.Load's check (requirements tpfield —
 // the target's tracefs format) (generate does not read tracefs — the same source gives the same ELF):
 //
 //	type GetppidEnter struct {

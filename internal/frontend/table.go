@@ -409,10 +409,14 @@ func init() {
 func init() {
 	apiTable[bpfPkg+".UprobeContext"] = apiEntry{sideBoth, ""}
 	apiTable[bpfPkg+".UserStr"] = apiEntry{sideBoth, ""}
+	apiTable[bpfPkg+".UserStrArray"] = apiEntry{sideBoth, ""}
 	apiTable[bpfPkg+".UprobeArg"] = apiEntry{sideEBPF, "uprobe_arg"}
 	apiTable[bpfPkg+".UprobeStr"] = apiEntry{sideEBPF, "uprobe_str"}
 	apiTable[bpfPkg+".RingBuf.OutputStr"] = apiEntry{sideEBPF, "output_str"}
 	apiTable[bpfPkg+".RingBuf.OutputStrOrDiscard"] = apiEntry{sideEBPF, "output_str_discard"} // a failed read (st < 0) discards
+	apiTable[bpfPkg+".UserBuf"] = apiEntry{sideBoth, ""}
+	apiTable[bpfPkg+".UprobeBuf"] = apiEntry{sideEBPF, "uprobe_buf"}
+	apiTable[bpfPkg+".RingBuf.OutputBuf"] = apiEntry{sideEBPF, "output_buf"} // a length-clamped user buffer (user.read)
 }
 
 // Kernel char * strings (bpf-mlir's kernel.read_str and the schema's strptr). KernelStr is a local type field type,
@@ -475,6 +479,7 @@ func init() {
 	apiTable[bpfPkg+".TPArgInt"] = apiEntry{sideEBPF, "tp_arg_int"}         // an integer argument of tp_btf
 	apiTable[bpfPkg+".FentryArg"] = apiEntry{sideEBPF, "fentry_arg"}        // a kernel pointer argument of fentry
 	apiTable[bpfPkg+".FentryArgInt"] = apiEntry{sideEBPF, "fentry_arg_int"} // an integer argument of fentry
+	apiTable[bpfPkg+".KernelAddr"] = apiEntry{sideEBPF, "kernel_addr"}      // the address of a checked kernel pointer (kptr.addr)
 }
 
 // Sockets and cgroups. Field methods have op "ctx_field" (field and r / w are in ctxFieldOfMethod of sockcg.go, permission in the hook table).
@@ -617,6 +622,9 @@ func init() {
 func init() {
 	apiTable[bpfPkg+".KsyscallContext"] = apiEntry{sideBoth, ""}
 	apiTable[bpfPkg+".KsyscallArg"] = apiEntry{sideEBPF, "ksyscall_arg"}
+	apiTable[bpfPkg+".KsyscallStr"] = apiEntry{sideEBPF, "ksyscall_str"}            // a user string (only as OutputStr's second argument — userStrArg)
+	apiTable[bpfPkg+".KsyscallStrArray"] = apiEntry{sideEBPF, "ksyscall_str_array"} // a user string array (At's receiver or a bound variable — strarray.go)
+	apiTable[bpfPkg+".UserStrArray.At"] = apiEntry{sideEBPF, "str_at"}              // `s, st, ok := a.At(i)` only (strarray.go)
 }
 
 // sockmap, sockhash and sk_skb. The eBPF side has only the terminal Redirect / RedirectIf; user space Sets entries.

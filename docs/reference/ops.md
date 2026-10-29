@@ -56,8 +56,9 @@ The set of ops the frontend may emit into the generated `.mlir` (allowedOps in `
 | `ebpf.kfield.ptr` | `bpf.IterContext.Seq`, following a kernel pointer field `if m := p.F; m != nil { … }` (F is *U) |
 | `ebpf.kfield.store` | a struct_ops write of a kernel integer field `sk.F = v` (sk is a checked StructOpsArg pointer) |
 | `ebpf.kprobe.arg` | `bpf.KprobeArg`, `bpf.KprobeRead` |
+| `ebpf.kptr.addr` | the address of a checked kernel pointer as an integer `bpf.KernelAddr(p)` |
 | `ebpf.kptr.check` | `bpf.FentryArg`, `bpf.IterContext.Seq`, `bpf.StructOpsArg`, `bpf.TPArg`, the check of a kernel pointer that can be NULL `if m := …; m != nil { … } [else { … }]` |
-| `ebpf.ksyscall.arg` | `bpf.KsyscallArg` |
+| `ebpf.ksyscall.arg` | `bpf.KsyscallArg`, `bpf.KsyscallStrArray`, `bpf.KsyscallStr` |
 | `ebpf.ktime.ns` | `bpf.KtimeNs` |
 | `ebpf.loop` | a bounded `for` (`for i := range N` / `for i := T(0); i < N; i++` — always unrolled) |
 | `ebpf.loop.yield` | the end of a bounded `for` body |
@@ -78,7 +79,7 @@ The set of ops the frontend may emit into the generated `.mlir` (allowedOps in `
 | `ebpf.probe.retval` | `bpf.KretprobeContext.Ret`, `bpf.UretprobeContext.Ret` |
 | `ebpf.probe.target_index` | `bpf.ProbeTargetIndex` |
 | `ebpf.program` | a program function (a top-level function whose first parameter is a context type) |
-| `ebpf.record.make` | `bpf.LPMTrie4.Lookup`, `bpf.PerfEventArray.Output`, `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.SeqFile.Write`, `bpf.SysBpf`, a record composite literal (an Update value, an Output event) |
+| `ebpf.record.make` | `bpf.LPMTrie4.Lookup`, `bpf.PerfEventArray.Output`, `bpf.RingBuf.OutputBuf`, `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.SeqFile.Write`, `bpf.SysBpf`, a record composite literal (an Update value, an Output event) |
 | `ebpf.redirect` | `bpf.TCEgressContext.RedirectIf`, `bpf.TCEgressContext.Redirect`, `bpf.TCIngressContext.RedirectIf`, `bpf.TCIngressContext.Redirect` |
 | `ebpf.redirect_map` | `bpf.CPUMap.RedirectIf`, `bpf.CPUMap.Redirect`, `bpf.DevMap.RedirectIf`, `bpf.DevMap.Redirect`, `bpf.DevMapHash.RedirectIf`, `bpf.DevMapHash.Redirect`, `bpf.XSKMap.RedirectIf`, `bpf.XSKMap.Redirect` |
 | `ebpf.ref.atomic_add` | `bpf.Hash.AddOrInit`, `bpf.LRUHash.AddOrInit`, the addition to an existing value in Hash.AddOrInit |
@@ -90,11 +91,11 @@ The set of ops the frontend may emit into the generated `.mlir` (allowedOps in `
 | `ebpf.ref.load` | `bpf.Array.Lookup`, `bpf.Hash.Lookup`, `bpf.InnerMap.Lookup`, `bpf.LPMTrie4.Lookup`, `bpf.LRUHash.Lookup`, `bpf.LRUPerCPUHash.Lookup`, `bpf.PerCPUArray.Lookup`, `bpf.PerCPUHash.Lookup`, a `*p` read inside a Lookup's checked branch |
 | `ebpf.return` | a subprogram's `return <value>` |
 | `ebpf.ringbuf.discard` | `bpf.RingBuf.OutputStrOrDiscard` |
-| `ebpf.ringbuf.if_reserved` | `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.RingBuf.Output` |
-| `ebpf.ringbuf.reserve` | `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.RingBuf.Output` |
-| `ebpf.ringbuf.store_field` | `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStr` |
-| `ebpf.ringbuf.store_record` | `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.RingBuf.Output` |
-| `ebpf.ringbuf.submit` | `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.RingBuf.Output` |
+| `ebpf.ringbuf.if_reserved` | `bpf.RingBuf.OutputBuf`, `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.RingBuf.Output` |
+| `ebpf.ringbuf.reserve` | `bpf.RingBuf.OutputBuf`, `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.RingBuf.Output` |
+| `ebpf.ringbuf.store_field` | `bpf.RingBuf.OutputBuf`, `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStr` |
+| `ebpf.ringbuf.store_record` | `bpf.RingBuf.OutputBuf`, `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.RingBuf.Output` |
+| `ebpf.ringbuf.submit` | `bpf.RingBuf.OutputBuf`, `bpf.RingBuf.OutputKernelStr`, `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr`, `bpf.RingBuf.Output` |
 | `ebpf.seq.write` | `bpf.SeqFile.Write` |
 | `ebpf.session.cookie.load` | `bpf.FsessionContext.Cookie`, `bpf.KprobeSessionContext.Cookie` |
 | `ebpf.session.cookie.store` | `bpf.FsessionContext.SetCookie`, `bpf.KprobeSessionContext.SetCookie` |
@@ -127,9 +128,12 @@ The set of ops the frontend may emit into the generated `.mlir` (allowedOps in `
 | `ebpf.tp.buffer.load` | `bpf.RawTPWritableContext.Buffer` |
 | `ebpf.tp.buffer.store` | `bpf.RawTPWritableContext.SetBuffer` |
 | `ebpf.tp.field` | `bpf.TracepointContext.Event` |
-| `ebpf.uprobe.arg` | `bpf.UprobeArg`, `bpf.UprobeStr` |
+| `ebpf.tp.field.copy` | copying a tracepoint [N]byte / [N]int8 event field `q.F = ctx.Event().G` (q is a checked map borrow or a ring buffer reservation) |
+| `ebpf.uprobe.arg` | `bpf.UprobeArg`, `bpf.UprobeBuf`, `bpf.UprobeStr` |
 | `ebpf.usdt.arg` | `bpf.USDTArg` |
+| `ebpf.user.read` | `bpf.RingBuf.OutputBuf` |
 | `ebpf.user.read_str` | `bpf.RingBuf.OutputStrOrDiscard`, `bpf.RingBuf.OutputStr` |
+| `ebpf.user.str_at` | `bpf.UserStrArray.At` |
 | `ebpf.user_ringbuf.callback` | `bpf.UserRingBuf.Drain` |
 | `ebpf.user_ringbuf.done` | `bpf.UserRingBuf.Drain` |
 | `ebpf.user_ringbuf.drain` | `bpf.UserRingBuf.Drain` |

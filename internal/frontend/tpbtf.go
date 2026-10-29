@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"go/types"
 	"reflect"
+	"strings"
 )
 
 // tp_btf and CO-RE kernel struct fields (bpf-mlir's ebpf.ctx.arg and ebpf.kfield.load), extended with kfield.copy, kfield.ptr and integer arguments:
@@ -17,6 +18,7 @@ import (
 //	parent.Pid / parent.Start           → ebpf.kfield.load %k "pid" : … -> i32 / "start_time" … -> i64 (8 to 64 bit)
 //	q.Comm = parent.Comm                → ebpf.kfield.copy %k "comm", %borrow "comm" (q is a checked record pointer)
 //	if m := parent.MM; m != nil { … }   → ebpf.kfield.ptr (kptr_or_null) + ebpf.kptr.check present(%m: kptr) / absent
+//	sk.Common.Daddr (Common SockCommon `kernel:"__sk_common"` — a kernel type by value) → ebpf.kfield.load %k "__sk_common.skc_daddr" (a path of 1 to 3 segments, the four reads)
 //	if p := bpf.TPArg[T](ctx, i); p != nil { … }    → schema argument i becomes nullable, ctx.arg → kptr_or_null + kptr.check
 //	x := bpf.TPArgInt[uint32](ctx, 3)   → ebpf.ctx.arg %ctx[3] : !ebpf.ctx<"tp_btf"> -> i32 (an integer argument)
 //	if p := bpf.FentryArg[T](ctx, i); p != nil { … } → fentry's ctx.arg (always kptr_or_null) + kptr.check, the schema's fentry args (the farg requirement)
@@ -31,7 +33,11 @@ const (
 	kfArray                // an 8-bit integer array [N] (1 ≤ N ≤ 64) — kfield.copy
 	kfPtr                  // a pointer to a local type — kfield.ptr (always possibly NULL)
 	kfStrPtr               // a char * string (bpf.KernelStr) — only in kernel.read_str of RingBuf.OutputKernelStr
+	kfStruct               // a local type embedded by value — only a step of a field path p.A.F (the schema's struct)
 )
+
+// maxKernelPath is the number of segments of a kernel field path p.A.B.F (bpf-mlir's limit — 1 to 3).
+const maxKernelPath = 3
 
 // maxKernelCopy is the upper bound of the kfield.copy array length (bpf-mlir's limit).
 const maxKernelCopy = 64
@@ -94,7 +100,7 @@ func (a *analyzer) kernelTypeOf(t types.Type, at token.Pos) *KernelType {
 		kf, ok := a.kernelFieldOf(f.Type(), f.Pos())
 		if !ok {
 			if good {
-				bad(f.Pos(), "kernel type %s: field %s has type %s — a kernel field is int8 to int64 / uint8 to uint64, [N]byte / [N]int8 (1 ≤ N ≤ %d — copied with q.F = p.F), or *U of a kernel type U (read with `if m := p.F; m != nil { … }`)", named.Obj().Name(), f.Name(), a.typeString(f.Type()), maxKernelCopy)
+				bad(f.Pos(), "kernel type %s: field %s has type %s — a kernel field is int8 to int64 / uint8 to uint64, [N]byte / [N]int8 (1 ≤ N ≤ %d — copied with q.F = p.F), *U of a kernel type U (read with `if m := p.F; m != nil { … }`), or a kernel type U by value (an embedded struct — read through p.F.G)", named.Obj().Name(), f.Name(), a.typeString(f.Type()), maxKernelCopy)
 			}
 			good = false
 			continue
@@ -148,6 +154,12 @@ func (a *analyzer) kernelFieldOf(t types.Type, at token.Pos) (KernelField, bool)
 				target := a.kernelTypeOf(n, at)
 				return KernelField{Kind: kfPtr, Target: target}, target != nil
 			}
+		}
+	}
+	if n, isNamed := t.(*types.Named); isNamed { // a local type embedded by value (Go rejects value cycles)
+		if _, isStruct := n.Underlying().(*types.Struct); isStruct && n.Obj().Pkg() == a.pkg.Types {
+			target := a.kernelTypeOf(n, at)
+			return KernelField{Kind: kfStruct, Target: target}, target != nil
 		}
 	}
 	return KernelField{}, false
@@ -397,8 +409,8 @@ func (a *analyzer) checkKptrUses(body ast.Node, v *types.Var, kt *KernelType, wr
 		if !ok || a.info.Uses[id] != v {
 			return
 		}
-		if call, isCall := parent(stack, 1).(*ast.CallExpr); isCall && a.isStorageOwnerArg(call, id) {
-			return // a local storage owner (the kptr argument of storage.get / delete)
+		if call, isCall := parent(stack, 1).(*ast.CallExpr); isCall && (a.isStorageOwnerArg(call, id) || a.isKernelAddrArg(call, id)) {
+			return // a local storage owner (the kptr argument of storage.get / delete) or bpf.KernelAddr's argument
 		}
 		sel, isSel := parent(stack, 1).(*ast.SelectorExpr)
 		if !isSel || sel.X != ast.Expr(id) {
@@ -419,27 +431,38 @@ func (a *analyzer) checkKptrUses(body ast.Node, v *types.Var, kt *KernelType, wr
 			good = false
 			return
 		}
-		switch p := parent(stack, 2).(type) {
+		top, k := ast.Expr(sel), 2 // the whole field path p.F / p.A.F (embedded structs)
+		for {
+			ps, isPS := parent(stack, k).(*ast.SelectorExpr)
+			if !isPS || ps.X != top {
+				break
+			}
+			top, k = ps, k+1
+		}
+		x := types.ExprString(top)
+		switch p := parent(stack, k).(type) {
 		case *ast.AssignStmt:
 			for _, lh := range p.Lhs {
-				if lh == ast.Expr(sel) {
-					if writable && p.Tok == token.ASSIGN && len(p.Lhs) == 1 && len(p.Rhs) == 1 {
+				if lh == top {
+					switch {
+					case writable && top != ast.Expr(sel):
+						a.report(Rejected, GB027KernelTypeShape, top.Pos(), nil, "the kernel struct field path %s cannot be written — a struct_ops program writes only a field of the argument itself (`%s.F = x` — bpf-mlir's kfield.store takes one segment)", x, id.Name)
+					case writable && p.Tok == token.ASSIGN && len(p.Lhs) == 1 && len(p.Rhs) == 1:
 						continue // struct_ops `sk.F = x` (kfield.store)
-					}
-					if writable {
-						a.report(Rejected, GB027KernelTypeShape, sel.Pos(), nil, "the kernel struct field %s.%s may only be written by a plain assignment `%s.%s = x` (one left side, =)", id.Name, sel.Sel.Name, id.Name, sel.Sel.Name)
-					} else {
-						a.report(Rejected, GB027KernelTypeShape, sel.Pos(), nil, "the kernel struct field %s.%s cannot be written — kernel pointers are read-only", id.Name, sel.Sel.Name)
+					case writable:
+						a.report(Rejected, GB027KernelTypeShape, top.Pos(), nil, "the kernel struct field %s may only be written by a plain assignment `%s = x` (one left side, =)", x, x)
+					default:
+						a.report(Rejected, GB027KernelTypeShape, top.Pos(), nil, "the kernel struct field %s cannot be written — kernel pointers are read-only", x)
 					}
 					good = false
 				}
 			}
 		case *ast.IncDecStmt:
-			a.report(Rejected, GB027KernelTypeShape, sel.Pos(), nil, "the kernel struct field %s.%s cannot be written — kernel pointers are read-only", id.Name, sel.Sel.Name)
+			a.report(Rejected, GB027KernelTypeShape, top.Pos(), nil, "the kernel struct field %s cannot be written — kernel pointers are read-only", x)
 			good = false
 		case *ast.UnaryExpr:
 			if p.Op == token.AND {
-				a.report(Rejected, GB027KernelTypeShape, p.Pos(), nil, "the address of the kernel struct field %s.%s cannot be taken", id.Name, sel.Sel.Name)
+				a.report(Rejected, GB027KernelTypeShape, p.Pos(), nil, "the address of the kernel struct field %s cannot be taken", x)
 				good = false
 			}
 		}
@@ -447,31 +470,150 @@ func (a *analyzer) checkKptrUses(body ast.Node, v *types.Var, kt *KernelType, wr
 	return good
 }
 
-// kptrSel resolves `p.F` (p a kernel pointer variable). handled reports whether e has that shape (on error it has reported and f is nil).
-func (l *lowerer) kptrSel(e ast.Expr) (kp kptrVal, f *KernelField, sel *ast.SelectorExpr, handled bool) {
-	sel, ok := ast.Unparen(e).(*ast.SelectorExpr)
-	if !ok {
-		return kp, nil, nil, false
+// isKernelAddrArg reports whether e is the argument of bpf.KernelAddr (kernelAddr checks its shape when lowering).
+func (a *analyzer) isKernelAddrArg(call *ast.CallExpr, e ast.Expr) bool {
+	if len(call.Args) != 1 || call.Args[0] != e {
+		return false
 	}
-	id, ok := sel.X.(*ast.Ident)
+	fun := ast.Unparen(call.Fun)
+	if ix, ok := fun.(*ast.IndexExpr); ok {
+		fun = ix.X
+	}
+	sel, ok := fun.(*ast.SelectorExpr)
 	if !ok {
-		return kp, nil, nil, false
+		return false
+	}
+	obj := a.info.Uses[sel.Sel]
+	if obj == nil || !inAPIPackage(obj) {
+		return false
+	}
+	en, known := lookupAPI(obj)
+	return known && en.op == "kernel_addr"
+}
+
+// kernelAddrKinds are the program kinds whose bodies may take a kernel pointer's address (bpf-mlir's kptr.addr).
+var kernelAddrKinds = map[string]bool{"tp_btf": true, "fentry": true, "fexit": true, "iter": true, "fmod_ret": true, "fsession": true}
+
+// kernelAddr lowers bpf.KernelAddr(p) (p a checked kernel pointer variable) to ebpf.kptr.addr — the 64 address bits as i64 (the pointee is not read).
+func (l *lowerer) kernelAddr(call *ast.CallExpr) (value, bool) {
+	arg := ast.Unparen(call.Args[0])
+	if l.progKind == nil || l.prog == nil || !kernelAddrKinds[l.progKind.Kind] {
+		l.fail(Rejected, GB027KernelTypeShape, call.Pos(), "bpf.KernelAddr may only be used in the body of a tp_btf, fentry, fexit, iter, fmod_ret or fsession program (bpf-mlir's kptr.addr)")
+		return value{}, false
+	}
+	if c, isCall := arg.(*ast.CallExpr); isCall {
+		if op := l.callOp(c); op == "fentry_arg" || op == "tp_arg" || op == "lsm_arg" {
+			l.fail(Rejected, GB005NilCheckShape, arg.Pos(), "the argument of bpf.KernelAddr may be NULL — check it first and pass the checked variable (`if p := bpf.FentryArg[T](ctx, i); p != nil { a := bpf.KernelAddr(p) }`)")
+			return value{}, false
+		}
+	}
+	if pk, sels, isPath := l.kpathOf(arg); isPath {
+		x := types.ExprString(arg)
+		if f, i := kpathLeaf(pk.kt, sels); f != nil && i == len(sels)-1 && f.Kind == kfPtr {
+			l.fail(Rejected, GB005NilCheckShape, arg.Pos(), "the kernel pointer field %s may be NULL — pass the checked variable: `if m := %s; m != nil { a := bpf.KernelAddr(m) }`", x, x)
+			return value{}, false
+		}
+		l.fail(Rejected, GB027KernelTypeShape, arg.Pos(), "the argument of bpf.KernelAddr must be a checked kernel pointer variable, got the field %s", x)
+		return value{}, false
+	}
+	id, isID := arg.(*ast.Ident)
+	var kp kptrVal
+	found := false
+	if isID {
+		if v, _ := l.a.info.Uses[id].(*types.Var); v != nil {
+			kp, found = l.kptrs[v]
+		}
+	}
+	if !found {
+		l.fail(Rejected, GB027KernelTypeShape, arg.Pos(), "the argument of bpf.KernelAddr must be a checked pointer of a local kernel type (from bpf.FentryArg / bpf.TPArg / a checked pointer field), got %s", types.ExprString(arg))
+		return value{}, false
+	}
+	if len(l.loops) > 0 {
+		l.fail(Rejected, GB018LoopShape, call.Pos(), "bpf.KernelAddr cannot be used inside a loop (bpf-mlir does not allow kptr.addr in a loop body) — take the address before the loop")
+		return value{}, false
+	}
+	defer l.at(call.Pos())()
+	r := l.val()
+	l.emit("%s = ebpf.kptr.addr %s : !ebpf.kptr<%q> -> i64", r, kp.name, kp.kt.Name)
+	return value{r, vtypeOf(IntType{Bits: 64})}, true
+}
+
+// kpathOf splits a selector chain `p.F` / `p.A.F` / `p.A.B.F` (p a kernel pointer variable) into p and its selectors from p outwards. ok is false for any other shape.
+func (l *lowerer) kpathOf(e ast.Expr) (kp kptrVal, sels []*ast.SelectorExpr, ok bool) {
+	x := ast.Unparen(e)
+	for {
+		s, isSel := x.(*ast.SelectorExpr)
+		if !isSel {
+			break
+		}
+		sels = append([]*ast.SelectorExpr{s}, sels...)
+		x = ast.Unparen(s.X)
+	}
+	id, isID := x.(*ast.Ident)
+	if !isID || len(sels) == 0 {
+		return kp, nil, false
 	}
 	v, _ := l.a.info.Uses[id].(*types.Var)
 	kp, isK := l.kptrs[v]
-	if v == nil || !isK {
+	return kp, sels, v != nil && isK
+}
+
+// kpathLeaf follows the embedded struct steps of sels from kt. It returns the last field reached and its index in sels
+// (the leaf, or the first step that is not an embedded struct; f is nil when a field is missing at index i).
+func kpathLeaf(kt *KernelType, sels []*ast.SelectorExpr) (f *KernelField, i int) {
+	for i = range sels {
+		if f = kt.fieldByGoName(sels[i].Sel.Name); f == nil || f.Kind != kfStruct || i == len(sels)-1 {
+			return f, i
+		}
+		kt = f.Target
+	}
+	return nil, 0
+}
+
+// kptrSel resolves `p.F`, or a field path `p.A.F` / `p.A.B.F` through embedded local types (p a kernel pointer variable — bpf-mlir's dotted kfield path of 1 to 3 segments).
+// f is a copy of the leaf whose Name is the dotted path of kernel field names. handled reports whether e has that shape (on error it has reported and f is nil).
+func (l *lowerer) kptrSel(e ast.Expr) (kp kptrVal, f *KernelField, sel *ast.SelectorExpr, handled bool) {
+	kp, sels, ok := l.kpathOf(e)
+	if !ok {
 		return kp, nil, nil, false
 	}
-	f = kp.kt.fieldByGoName(sel.Sel.Name)
-	if f == nil {
-		l.fail(Rejected, GB027KernelTypeShape, sel.Sel.Pos(), "kernel type %s has no readable field %s", kp.kt.goName(), sel.Sel.Name)
+	sel = sels[len(sels)-1]
+	leaf, i := kpathLeaf(kp.kt, sels)
+	if leaf == nil {
+		owner := kp.kt.goName()
+		if i > 0 {
+			owner = types.ExprString(sels[i-1])
+		}
+		l.fail(Rejected, GB027KernelTypeShape, sels[i].Sel.Pos(), "kernel type %s has no readable field %s", owner, sels[i].Sel.Name)
+		return kp, nil, sel, true
+	}
+	if i < len(sels)-1 {
+		step := types.ExprString(sels[i])
+		if leaf.Kind == kfPtr {
+			l.fail(Rejected, GB005NilCheckShape, sels[i].Pos(), "the kernel pointer field %s may be NULL — read it only as `if m := %s; m != nil { … m.F … }`", step, step)
+		} else {
+			l.fail(Rejected, GB027KernelTypeShape, sels[i].Pos(), "the kernel field %s is not an embedded kernel struct — only an embedded kernel type (a field of a kernel type U by value) is a step of a field path", step)
+		}
+		return kp, nil, sel, true
+	}
+	if len(sels) > maxKernelPath {
+		l.fail(Rejected, GB027KernelTypeShape, sel.Pos(), "the kernel field path %s has %d segments — bpf-mlir reads a field path of 1 to %d segments", types.ExprString(sel), len(sels), maxKernelPath)
 		return kp, nil, sel, true
 	}
 	if len(l.loops) > 0 {
 		l.fail(Rejected, GB018LoopShape, sel.Pos(), "the kernel struct field %s cannot be read inside a loop (bpf-mlir does not allow kfield.load in a loop body) — read it before the loop", types.ExprString(sel))
 		return kp, nil, sel, true
 	}
-	return kp, f, sel, true
+	path := make([]string, 0, len(sels))
+	kt := kp.kt
+	for _, s := range sels {
+		sf := kt.fieldByGoName(s.Sel.Name)
+		path = append(path, sf.Name)
+		kt = sf.Target
+	}
+	out := *leaf
+	out.Name = strings.Join(path, ".")
+	return kp, &out, sel, true
 }
 
 // kptrField lowers `p.F` (p a kernel pointer, F an integer) to ebpf.kfield.load. handled reports whether e has that shape.
@@ -493,6 +635,9 @@ func (l *lowerer) kptrField(e ast.Expr) (value, bool, bool) {
 		return value{}, false, true
 	case kfStrPtr:
 		l.fail(Rejected, GB027KernelTypeShape, sel.Pos(), "the kernel string field %s (bpf.KernelStr) cannot be used as a value — pass it only as the second argument of RingBuf.OutputKernelStr (kernel.read_str)", x)
+		return value{}, false, true
+	case kfStruct:
+		l.fail(Rejected, GB027KernelTypeShape, sel.Pos(), "the embedded kernel struct %s cannot be read as a value — read its fields (%s.F)", x, x)
 		return value{}, false, true
 	}
 	defer l.at(sel.Pos())()
@@ -545,15 +690,9 @@ func (l *lowerer) kptrSource(e ast.Expr) string {
 		}
 		return ""
 	}
-	if sel, ok := ast.Unparen(e).(*ast.SelectorExpr); ok {
-		if id, ok := sel.X.(*ast.Ident); ok {
-			if v, _ := l.a.info.Uses[id].(*types.Var); v != nil {
-				if kp, isK := l.kptrs[v]; isK {
-					if f := kp.kt.fieldByGoName(sel.Sel.Name); f != nil && f.Kind == kfPtr {
-						return "field"
-					}
-				}
-			}
+	if kp, sels, ok := l.kpathOf(e); ok { // p.F or a field path p.A.F (kptrSel reports a path that is too long)
+		if f, i := kpathLeaf(kp.kt, sels); f != nil && i == len(sels)-1 && f.Kind == kfPtr {
+			return "field"
 		}
 	}
 	return ""
@@ -727,6 +866,8 @@ func (f KernelField) schemaType() any {
 		return map[string]string{"kind": "kptr", "struct": f.Target.Name}
 	case kfStrPtr:
 		return map[string]string{"kind": "strptr"} // bpf-mlir's schema strptr (schema format 15)
+	case kfStruct:
+		return map[string]string{"kind": "struct", "struct": f.Target.Name} // an embedded local type (a step of a field path)
 	}
 	return schemaIntOf(IntType{f.Bits, f.Signed})
 }
@@ -740,17 +881,31 @@ func (l *lowerer) kptrChainMisuse(e ast.Expr) bool {
 	}
 	v, _ := l.a.info.Uses[root].(*types.Var)
 	kp, isK := l.kptrs[v]
-	sel, isSel := steps[0].(*ast.SelectorExpr)
-	if v == nil || !isK || !isSel {
+	var sels []*ast.SelectorExpr // the leading selectors (through embedded structs)
+	for _, st := range steps {
+		s, isSel := st.(*ast.SelectorExpr)
+		if !isSel {
+			break
+		}
+		sels = append(sels, s)
+	}
+	if v == nil || !isK || len(sels) == 0 {
 		return false
 	}
-	f := kp.kt.fieldByGoName(sel.Sel.Name)
+	f, i := kpathLeaf(kp.kt, sels)
+	sel := sels[i]
 	if f == nil {
-		l.fail(Rejected, GB027KernelTypeShape, sel.Sel.Pos(), "kernel type %s has no readable field %s", kp.kt.goName(), sel.Sel.Name)
+		owner := kp.kt.goName()
+		if i > 0 {
+			owner = types.ExprString(sels[i-1])
+		}
+		l.fail(Rejected, GB027KernelTypeShape, sel.Sel.Pos(), "kernel type %s has no readable field %s", owner, sel.Sel.Name)
 		return true
 	}
 	x := types.ExprString(sel)
 	switch f.Kind {
+	case kfStruct:
+		l.fail(Rejected, GB027KernelTypeShape, sel.Pos(), "the embedded kernel struct %s cannot be indexed — read its fields (%s.F)", x, x)
 	case kfPtr:
 		l.fail(Rejected, GB005NilCheckShape, sel.Pos(), "the kernel pointer field %s may be NULL — read it only as `if m := %s; m != nil { … m.F … }`", x, x)
 	case kfArray:

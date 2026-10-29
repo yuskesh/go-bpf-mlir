@@ -9,20 +9,19 @@ import (
 	"github.com/yuskesh/go-bpf-mlir/livecaps"
 )
 
-// LoaderDecl is gobpf's loader declaration (bpf-mlir's requirements_format.md): cilium v0.22 (requirements.Cilium022) with **ksyscall_attach
-// changed to prefix, usdt_attach to ref_ctr, sockmap_attach to prog_attach, lsm_cgroup_load to btf_id
+// LoaderDecl is gobpf's loader declaration (bpf-mlir's requirements_format.md): the preset cilium-v0.22-usdt-ksyscall (cilium v0.22 with **ksyscall_attach
+// changed to prefix and usdt_attach to ref_ctr**) with **sockmap_attach changed to prog_attach, lsm_cgroup_load to btf_id
 // (the local cilium fork looks up the BTF id through upstream PR #2115), and fsession_load to btf_id (PR #2108)**. cilium v0.22 fails to attach to the bare name
 // after `ksyscall/<name>` in the section (declared none), does not attach USDT points (declared none), and attaches to a sockmap with a link (kernels before 6.10
 // have no sockmap link), but gobpf attaches to `__x64_sys_<name>` itself in AttachKsyscall, attaches with bpf-mlir's glue in AttachUSDT (livecaps.AttachUSDT —
 // declared ref_ctr, the same as livecaps.USDTLoader), and attaches with BPF_PROG_ATTACH in AttachSockmap (livecaps.AttachSockmapProgAttach — declared
 // prog_attach, the same as livecaps.SockmapProgAttachLoader) — the declaration matches how it attaches. For an object with ksyscall, usdt or sk_skb programs,
 // the check (Load, CheckTarget) sets the caps' Loader() to this declaration. Other objects are checked with the caps' own declaration (Cilium022).
-// ksyscall_attach comes from bpf-mlir's preset `cilium-v0.22-ksyscall` (requirements.Cilium022Ksyscall — it differs from Cilium022
-// only in ksyscall_attach, which is prefix), and the attach is livecaps.AttachKsyscall — the declared value is the same as before.
+// ksyscall_attach and usdt_attach come from bpf-mlir's preset `cilium-v0.22-usdt-ksyscall` (requirements.Cilium022USDTKsyscall — it differs from Cilium022
+// only in ksyscall_attach, which is prefix, and usdt_attach, which is ref_ctr), and the attaches are livecaps.AttachKsyscall and livecaps.AttachUSDT — the declared values are the same as before.
 var LoaderDecl = func() requirements.LoaderDecl {
-	d := requirements.Cilium022Ksyscall
+	d := requirements.Cilium022USDTKsyscall
 	d.Name = loaderName
-	d.USDTAttach = livecaps.USDTLoader.USDTAttach
 	d.SockmapAttach = livecaps.SockmapProgAttachLoader.SockmapAttach // AttachSockmap uses PROG_ATTACH (6.6 has no sockmap link)
 	d.LSMCgroupLoad = requirements.ProgLoadBTFID                     // the cilium fork (v0.22.0-gobpf.3 — upstream PR #2115) loads with the BTF id of bpf_lsm_<hook>
 	d.FsessionLoad = fsessionLoad                                    // the cilium fork (v0.22.0-gobpf.4 — upstream PR #2108) loads with the function's BTF id; the plain upstream build has none

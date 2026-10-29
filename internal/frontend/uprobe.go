@@ -78,26 +78,31 @@ func (a *analyzer) checkUprobeBinaries() {
 			continue
 		}
 		// uprobe_multi checks each symbol of the list (one binary — the same sha256).
-		params := map[string][]string{}
+		params, ptrs := map[string][]string{}, map[string][]string{}
 		sha := ""
+		// A binary without .debug_info is checked against the separate debug file its .gnu_debuglink names, in the binary's directory only.
+		debug := func(name string) ([]byte, error) {
+			return os.ReadFile(filepath.Join(a.dir, filepath.Dir(d.path), name))
+		}
 		for _, sym := range strings.Fields(p.Attach) {
-			info, err := uprobeabi.Inspect(f, sym)
+			info, err := uprobeabi.Inspect(f, sym, debug)
 			if err != nil {
 				fail("%s: %v", d.path, err)
 				sha = ""
 				break
 			}
-			sha, params[sym] = info.SHA256, info.Params
+			sha, params[sym], ptrs[sym] = info.SHA256, info.Params, info.Pointers
 		}
 		f.Close()
 		if sha != "" {
-			p.BinarySHA256, p.uprobeParams = sha, params
+			p.BinarySHA256, p.uprobeParams, p.uprobePtrs = sha, params, ptrs
 		}
 	}
 }
 
-// checkUprobeParams checks the UprobeArg types and UprobeStr arguments collected by lowering against the target's DWARF argument types (at generate
-// time — the pre-load gate does the same check).
+// checkUprobeParams checks the UprobeArg types and UprobeStr / UprobeBuf arguments collected by lowering against the target's DWARF argument types (at
+// generate time — the pre-load gate does the same check). A raw pointer (UprobeArg[uintptr]) and a user buffer (UprobeBuf) are checked against the
+// pointer spelling: only a depth-1, 8-byte pointer is "ptr" (char ** and integers stop).
 func (a *analyzer) checkUprobeParams() {
 	for _, p := range a.programs {
 		if (p.ProgramType != "uprobe" && p.ProgramType != "uprobe_multi") || p.BinarySHA256 == "" {
@@ -107,6 +112,9 @@ func (a *analyzer) checkUprobeParams() {
 		check := func(n int, want string, pos token.Pos) {
 			for _, sym := range strings.Fields(p.Attach) {
 				ps := p.uprobeParams[sym]
+				if want == "ptr" {
+					ps = p.uprobePtrs[sym]
+				}
 				if n > len(ps) {
 					a.report(Rejected, GB008ProgramShape, pos, []string{p.Symbol}, "%s program %s reads argument %d of %s, which takes %d arguments in the binary's DWARF", p.ProgramType, p.Symbol, n, sym, len(ps))
 					return
@@ -122,6 +130,12 @@ func (a *analyzer) checkUprobeParams() {
 		}
 		for n, pos := range p.StrParams {
 			check(n, "strptr", pos)
+		}
+		for n, pos := range p.PtrParams {
+			check(n, "ptr", pos)
+		}
+		for n, pos := range p.BufParams {
+			check(n, "ptr", pos)
 		}
 	}
 }
@@ -141,11 +155,11 @@ func intSpelling(t IntType) string {
 	return fmt.Sprintf("u%d", t.Bits)
 }
 
-// uprobeStrCall reports whether the call is bpf.UprobeStr.
-func (l *lowerer) uprobeStrCall(e ast.Expr) (*ast.CallExpr, bool) {
+// userStrCall reports whether the call is bpf.UprobeStr or bpf.KsyscallStr (op is the table's "uprobe_str" / "ksyscall_str").
+func (l *lowerer) userStrCall(e ast.Expr) (call *ast.CallExpr, op string) {
 	call, ok := ast.Unparen(e).(*ast.CallExpr)
 	if !ok {
-		return nil, false
+		return nil, ""
 	}
 	var obj types.Object
 	switch f := ast.Unparen(call.Fun).(type) {
@@ -155,38 +169,68 @@ func (l *lowerer) uprobeStrCall(e ast.Expr) (*ast.CallExpr, bool) {
 		obj = l.a.info.Uses[f]
 	}
 	if obj == nil || !inAPIPackage(obj) {
-		return nil, false
+		return nil, ""
 	}
 	en, known := lookupAPI(obj)
-	return call, known && en.op == "uprobe_str"
+	if !known || (en.op != "uprobe_str" && en.op != "ksyscall_str") {
+		return nil, ""
+	}
+	return call, en.op
 }
 
-// userStrArg lowers the second argument of OutputStr, `bpf.UprobeStr(ctx, n)`, to `ebpf.uprobe.arg %ctx n -> !ebpf.user_str`.
+// userStrArg lowers the second argument of OutputStr to a !ebpf.user_str value: `bpf.UprobeStr(ctx, n)` (uprobe) to `ebpf.uprobe.arg %ctx n`,
+// `bpf.KsyscallStr(ctx, n)` (ksyscall) to `ebpf.ksyscall.arg %ctx n`, and `ctx.Event().F` with F a bpf.UserStr field (tracepoint) to `ebpf.tp.field %ctx "<name>" [<off>]`.
 func (l *lowerer) userStrArg(e ast.Expr, m *BpfMap) (string, bool) {
-	call, ok := l.uprobeStrCall(e)
-	if !ok {
-		l.fail(Rejected, GB008ProgramShape, e.Pos(), "the second argument of %s.OutputStr / OutputStrOrDiscard must be bpf.UprobeStr(ctx, n) written in place", m.Symbol)
+	if sel, ok := ast.Unparen(e).(*ast.SelectorExpr); ok && l.tpEventCall(sel.X) {
+		return l.tpStrArg(sel)
+	}
+	if id, ok := ast.Unparen(e).(*ast.Ident); ok {
+		if v, _ := l.a.info.Uses[id].(*types.Var); v != nil {
+			if r, isAt := l.strVars[v]; isAt { // the s of `s, st, ok := a.At(i)` (strarray.go)
+				return r, true
+			}
+		}
+	}
+	call, op := l.userStrCall(e)
+	if call == nil {
+		l.fail(Rejected, GB008ProgramShape, e.Pos(), "the second argument of %s.OutputStr / OutputStrOrDiscard must be a user string written in place: bpf.UprobeStr(ctx, n) (uprobe), bpf.KsyscallStr(ctx, n) (ksyscall), ctx.Event().F with F a bpf.UserStr field (tracepoint), or the s of `s, st, ok := a.At(i)` (a bpf.UserStrArray element)", m.Symbol)
 		return "", false
 	}
-	if l.calleeAttach(call.Pos(), "bpf.UprobeStr") { // a callee that takes the context
+	fn, kind := "bpf.UprobeStr", "uprobe"
+	if op == "ksyscall_str" {
+		fn, kind = "bpf.KsyscallStr", "ksyscall"
+	}
+	if l.calleeAttach(call.Pos(), fn) { // a callee that takes the context
 		return "", false
 	}
-	if l.progKind == nil || l.progKind.Kind != "uprobe" || l.prog == nil {
-		// uprobe_multi is out of scope — integer arguments, return values and numbers only (no demand — limits).
-		l.fail(Rejected, GB008ProgramShape, call.Pos(), "bpf.UprobeStr may only be used in a uprobe program (func f(ctx *bpf.UprobeContext) with //gobpf:uprobe) — not in a uprobe_multi program, which reads integer arguments only")
+	if l.progKind == nil || l.progKind.Kind != kind || l.prog == nil {
+		if kind == "uprobe" {
+			// uprobe_multi is out of scope — integer arguments, return values and numbers only (no demand — limits).
+			l.fail(Rejected, GB008ProgramShape, call.Pos(), "bpf.UprobeStr may only be used in a uprobe program (func f(ctx *bpf.UprobeContext) with //gobpf:uprobe) — not in a uprobe_multi program, which reads integer arguments only")
+		} else {
+			l.fail(Rejected, GB008ProgramShape, call.Pos(), "bpf.KsyscallStr may only be used in a ksyscall program (func f(ctx *bpf.KsyscallContext) with //gobpf:ksyscall <syscall>)")
+		}
 		return "", false
 	}
 	if id, ok := ast.Unparen(call.Args[0]).(*ast.Ident); !ok || l.a.info.Uses[id] != l.ctxVar {
-		l.fail(Rejected, GB008ProgramShape, call.Args[0].Pos(), "the first argument of bpf.UprobeStr must be the program's context parameter")
+		l.fail(Rejected, GB008ProgramShape, call.Args[0].Pos(), "the first argument of %s must be the program's context parameter", fn)
 		return "", false
 	}
-	n, ok := l.argNumber(call.Args[1], "bpf.UprobeStr")
+	n, ok := l.argNumber(call.Args[1], fn)
 	if !ok {
 		return "", false
 	}
 	p := l.prog
 	if _, taken := p.Params[n]; taken {
-		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the uprobe program %s is read as an integer at %s and as a user string here — one argument has one type", n, p.Symbol, posString(l.a.position(p.paramPos[n])))
+		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the %s program %s is read as an integer at %s and as a user string here — one argument has one type", n, kind, p.Symbol, posString(l.a.position(p.paramPos[n])))
+		return "", false
+	}
+	if apos, isArr := p.StrArrParams[n]; isArr {
+		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the %s program %s is read as a user string array at %s and as a user string here — one argument has one type", n, kind, p.Symbol, posString(l.a.position(apos)))
+		return "", false
+	}
+	if what, apos := p.argTaken(n); what == "a pointer" || what == "a user buffer" {
+		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the %s program %s is read as %s at %s and as a user string here — one argument has one type", n, kind, p.Symbol, what, posString(l.a.position(apos)))
 		return "", false
 	}
 	if p.StrParams == nil {
@@ -196,8 +240,30 @@ func (l *lowerer) userStrArg(e ast.Expr, m *BpfMap) (string, bool) {
 		p.StrParams[n] = call.Pos()
 	}
 	r := l.val()
-	l.emit("%s = ebpf.uprobe.arg %%ctx %d : !ebpf.ctx<\"uprobe\"> -> !ebpf.user_str", r, n)
+	l.emit("%s = ebpf.%s.arg %%ctx %d : !ebpf.ctx<%q> -> !ebpf.user_str", r, kind, n, kind)
 	return r, true
+}
+
+// tpStrArg lowers `ctx.Event().F` (F a bpf.UserStr field of the tracepoint event) to `ebpf.tp.field %ctx "<name>" [<off>] : … -> !ebpf.user_str`.
+func (l *lowerer) tpStrArg(sel *ast.SelectorExpr) (string, bool) {
+	defer l.at(sel.Pos())()
+	if !l.tpEventPlace(ast.Unparen(sel.X).(*ast.CallExpr)) {
+		return "", false
+	}
+	for _, f := range l.prog.TPFields {
+		if f.GoName != sel.Sel.Name || !f.Str { // an integer field here is a Go type error (OutputStr's second parameter is UserStr)
+			continue
+		}
+		r := l.val()
+		l.emit("%s = ebpf.tp.field %%ctx %q [%d] : !ebpf.ctx<\"tracepoint\"> -> !ebpf.user_str", r, f.Name, f.Offset)
+		return r, true
+	}
+	if l.prog.tpEvent != nil && !l.prog.tpTagged[sel.Sel.Name] {
+		l.fail(Rejected, GB008ProgramShape, sel.Sel.Pos(), "%s.%s has no `tp:\"<name>\"` tag — only the tagged fields of the event record are readable (each read is checked against the tracefs format at load)", l.prog.tpEvent.Obj().Name(), sel.Sel.Name)
+	} else {
+		l.failed = true // the error in E is already reported
+	}
+	return "", false
 }
 
 // argNumber is the argument number of KprobeArg / UprobeArg / UprobeStr (a constant from 1 to 6).

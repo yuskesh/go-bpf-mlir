@@ -54,3 +54,10 @@ func FentryArg[T any](ctx *FentryContext, i uint32) *T { panic(ebpfOnly("FentryA
 // stopped with a named error by gobpf.Load's check (requirements farg and the target BTF's func_param). Only the shape `x := bpf.FentryArgInt[T](ctx, i)` at the top level of the program body
 // (the same as TPArgInt). Earlier arguments you do not read need no declaration. It may be mixed with FentryArg in the same program (one declaration per argument).
 func FentryArgInt[T KprobeInt](ctx *FentryContext, i uint32) T { panic(ebpfOnly("FentryArgInt")) }
+
+// KernelAddr is eBPF side only: all 64 address bits of a checked kernel pointer p as an integer (ebpf.kptr.addr — bpf-mlir v1.16). p is a variable holding a checked pointer
+// of a local kernel type (the present arm of `if p := bpf.FentryArg[T](ctx, i); p != nil`, a non-nullable bpf.TPArg, `if m := p.F; m != nil`, an iter seq), written directly.
+// Only in the body of a tp_btf, fentry, fexit, iter, fmod_ret or fsession program, outside loops. The pointee is not read. The value is for correlating live objects
+// (map keys, event fields, comparing two paths to the same object) — it says nothing once the object is freed (an address may be reused), and there is no conversion back to a pointer.
+// Storing it in a map needs CAP_PERFMON, as loading a tracing program does.
+func KernelAddr[T any](p *T) uint64 { panic(ebpfOnly("KernelAddr")) }

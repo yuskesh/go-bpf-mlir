@@ -61,10 +61,46 @@ var caseFixtures = map[string][]string{
 	"ustack_ok":                {"cfix"},
 	"us_too_many":              {"usfix"},
 	"us_wrong_type":            {"usfix"},
+	"ustr_ksys_in_uprobe":      {"cfix"},
+	// Split DWARF: a separate debug file is staged as "<source>:<name>" — the name sfix's .gnu_debuglink gives (the directives do not name it).
+	"usplit_ok":          {"sfix", "sfix.debug:sfix.debug"},
+	"usplit_no_debug":    {"sfix"},
+	"usplit_no_link":     {"sfix-nolink"},
+	"usplit_other_build": {"sfix", "sfix-otherid.debug:sfix.debug"},
+	"usplit_bad_crc":     {"sfix", "sfix-badcrc.debug:sfix.debug"},
+	"usplit_wrong_type":  {"sfix", "sfix.debug:sfix.debug"},
+	// User buffers and raw pointers (bfix — buf_write(void *ctx, const void *buf, int len), buf_argv(char **v, int n)).
+	"ubuf_ok":               {"bfix"},
+	"ubuf_pad_stack":        {"bfix"},
+	"ubuf_pad_named":        {"bfix"},
+	"ubuf_elsewhere":        {"bfix"},
+	"ubuf_multi":            {"umfix"},
+	"ubuf_ptr_multi":        {"umfix"},
+	"ubuf_no_field":         {"bfix"},
+	"ubuf_two_fields":       {"bfix"},
+	"ubuf_too_big":          {"bfix"},
+	"ubuf_wide_elem":        {"bfix"},
+	"ubuf_no_status":        {"bfix"},
+	"ubuf_len_int64":        {"bfix"},
+	"ubuf_len_in_literal":   {"bfix"},
+	"ubuf_status_discarded": {"bfix"},
+	"ubuf_int_arg":          {"bfix"},
+	"ubuf_ptr_int":          {"bfix"},
+	"ubuf_char2":            {"bfix"},
+	"ubuf_in_loop":          {"bfix"},
+	"ubuf_twotypes":         {"bfix"},
 }
 
 // fixtureNames are the binaries in internal/fixtures.
-var fixtureNames = []string{"cfix", "cgofix.bin", "umfix", "usfix"}
+var fixtureNames = []string{"cfix", "cgofix.bin", "umfix", "usfix", "sfix", "sfix-nolink", "bfix"}
+
+// stagedName splits a caseFixtures entry into the file in internal/fixtures and its name in the staged case.
+func stagedName(entry string) (src, dst string) {
+	if s, d, ok := strings.Cut(entry, ":"); ok {
+		return s, d
+	}
+	return entry, entry
+}
 
 // stagedCases maps a case name to its staged directory (filled by TestMain before any test runs, read only afterwards).
 var stagedCases = map[string]string{}
@@ -139,7 +175,8 @@ func stageCases() (string, error) {
 			}
 		}
 		for _, f := range fixtures {
-			if err := copyFile(filepath.Join(modRoot, "internal", "fixtures", f), filepath.Join(dst, f), 0o755); err != nil {
+			src, name := stagedName(f)
+			if err := copyFile(filepath.Join(modRoot, "internal", "fixtures", src), filepath.Join(dst, name), 0o755); err != nil {
 				return root, err
 			}
 		}
@@ -212,6 +249,9 @@ func TestCaseFixturesMatchDirectives(t *testing.T) {
 			}
 		}
 		for _, f := range declared {
+			if _, name := stagedName(f); strings.HasSuffix(name, ".debug") {
+				continue // a separate debug file is named by the binary's .gnu_debuglink, not by a directive
+			}
 			if !slices.Contains(named, f) {
 				t.Errorf("caseFixtures declares %s for testdata/%s, but no directive names it", f, e.Name())
 			}

@@ -114,6 +114,7 @@ Each example package (`examples/` — each has a `-selftest`) with its program k
 | `bpf.InodeStorage.Get` | — (no example package; covered by the frontend tests) |
 | `bpf.IterContext.Seq` | — (no example package; covered by the frontend tests) |
 | `bpf.IterContext.SeqNum` | — (no example package; covered by the frontend tests) |
+| `bpf.KernelAddr` | — (no example package; covered by the frontend tests) |
 | `bpf.KprobeArg` | `examples/openwatch` |
 | `bpf.KprobeRead` | — (no example package; covered by the frontend tests) |
 | `bpf.KprobeSessionContext.Cookie` | — (no example package; covered by the frontend tests) |
@@ -123,6 +124,8 @@ Each example package (`examples/` — each has a `-selftest`) with its program k
 | `bpf.KprobeSessionSkipReturn` | — (no example package; covered by the frontend tests) |
 | `bpf.KretprobeContext.Ret` | — (no example package; covered by the frontend tests) |
 | `bpf.KsyscallArg` | — (no example package; covered by the frontend tests) |
+| `bpf.KsyscallStr` | — (no example package; covered by the frontend tests) |
+| `bpf.KsyscallStrArray` | — (no example package; covered by the frontend tests) |
 | `bpf.KtimeNs` | `examples/pollstack`, `examples/syscount`, `examples/xdpwindow` |
 | `bpf.LPMTrie4.Lookup` | `examples/ipdeny` |
 | `bpf.LRUHash.AddOrInit` | — (no example package; covered by the frontend tests) |
@@ -175,6 +178,7 @@ Each example package (`examples/` — each has a `-selftest`) with its program k
 | `bpf.ReuseportSockArray.Select` | — (no example package; covered by the frontend tests) |
 | `bpf.RingBuf.Discard` | — (no example package; covered by the frontend tests) |
 | `bpf.RingBuf.Output` | `examples/flowsample`, `examples/syscount` |
+| `bpf.RingBuf.OutputBuf` | — (no example package; covered by the frontend tests) |
 | `bpf.RingBuf.OutputKernelStr` | — (no example package; covered by the frontend tests) |
 | `bpf.RingBuf.OutputStr` | `examples/greetwatch` |
 | `bpf.RingBuf.OutputStrOrDiscard` | — (no example package; covered by the frontend tests) |
@@ -270,9 +274,11 @@ Each example package (`examples/` — each has a `-selftest`) with its program k
 | `bpf.TracepointContext.Event` | — (no example package; covered by the frontend tests) |
 | `bpf.USDTArg` | — (no example package; covered by the frontend tests) |
 | `bpf.UprobeArg` | `examples/greetwatch` |
+| `bpf.UprobeBuf` | — (no example package; covered by the frontend tests) |
 | `bpf.UprobeStr` | `examples/greetwatch` |
 | `bpf.UretprobeContext.Ret` | — (no example package; covered by the frontend tests) |
 | `bpf.UserRingBuf.Drain` | — (no example package; covered by the frontend tests) |
+| `bpf.UserStrArray.At` | — (no example package; covered by the frontend tests) |
 | `bpf.Window.BE16` | `examples/ethercount`, `examples/flowsample`, `examples/ipdeny`, `examples/portcount`, `examples/tailparse`, `examples/tccount`, `examples/tcpopts`, `examples/xdpdecap`, `examples/xdpfwd` |
 | `bpf.Window.BE32` | `examples/xdpdecap` |
 | `bpf.Window.BE64` | `examples/xdpdecap` |

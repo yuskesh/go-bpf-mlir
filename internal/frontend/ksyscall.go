@@ -62,6 +62,14 @@ func (l *lowerer) ksyscallArgAssign(s *ast.AssignStmt) bool {
 	if p.Params == nil {
 		p.Params, p.paramPos = map[int]IntType{}, map[int]token.Pos{}
 	}
+	if spos, isStr := p.StrParams[n]; isStr {
+		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the ksyscall program %s is read as a user string at %s and as an integer here — one argument has one type", n, p.Symbol, posString(l.a.position(spos)))
+		return true
+	}
+	if apos, isArr := p.StrArrParams[n]; isArr {
+		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the ksyscall program %s is read as a user string array at %s and as an integer here — one argument has one type", n, p.Symbol, posString(l.a.position(apos)))
+		return true
+	}
 	if prev, seen := p.Params[n]; seen && prev != it {
 		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the ksyscall program %s is read as %s here but as %s at %s — one argument has one type (schema params)", n, p.Symbol, goIntName(it), goIntName(prev), posString(l.a.position(p.paramPos[n])))
 		return true

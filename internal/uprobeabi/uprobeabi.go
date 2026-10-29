@@ -25,6 +25,7 @@ import (
 type Info struct {
 	SHA256     string   // the sha256 of the whole binary (hex)
 	Params     []string // the parameter type spellings (results excluded — "" for an unreadable type)
+	Pointers   []string // the parameter pointer spellings (parallel to Params — "ptr" only for a depth-1, 8-byte pointer; see pointerSpelling)
 	ParamNames []string
 	FileOffset uint64 // the file offset of the symbol's entry (st_value − p_vaddr + p_offset — the uprobe attach Address)
 	Language   int64  // the CU's DW_AT_language
@@ -54,8 +55,9 @@ var sysvLanguages = map[int64]string{
 const langGo = 0x16
 
 // Inspect inspects the symbol in r (the whole binary). It checks the sha256, the symbol, the abi and the arguments in that order and returns the first mismatch as an error (an abi error is *ABIError /
-// *ABIUnknownError).
-func Inspect(r io.ReaderAt, symbol string) (*Info, error) {
+// *ABIUnknownError). A binary without .debug_info is read through debug (the separate debug file named by its .gnu_debuglink — see dwarfOf);
+// nil debug reads only the binary's own DWARF.
+func Inspect(r io.ReaderAt, symbol string, debug DebugFile) (*Info, error) {
 	h := sha256.New()
 	if _, err := io.Copy(h, io.NewSectionReader(r, 0, 1<<62)); err != nil {
 		return nil, fmt.Errorf("reading the binary: %w", err)
@@ -70,7 +72,7 @@ func Inspect(r io.ReaderAt, symbol string) (*Info, error) {
 		return info, err
 	}
 	info.FileOffset = off
-	d, err := f.DWARF()
+	d, err := dwarfOf(f, debug)
 	if err != nil {
 		return info, &ABIUnknownError{symbol, "the binary has no DWARF: " + err.Error()}
 	}
@@ -120,13 +122,14 @@ func Inspect(r io.ReaderAt, symbol string) (*Info, error) {
 			if c.Tag == dwarf.TagFormalParameter {
 				if vp, _ := c.Val(dwarf.AttrVarParam).(bool); !vp {
 					name, _ := c.Val(dwarf.AttrName).(string)
-					typ := ""
+					typ, ptr := "", ""
 					if o, ok := c.Val(dwarf.AttrType).(dwarf.Offset); ok {
 						if t, err := d.Type(o); err == nil {
-							typ = spelling(t)
+							typ, ptr = spelling(t), pointerSpelling(t)
 						}
 					}
 					info.Params = append(info.Params, typ)
+					info.Pointers = append(info.Pointers, ptr)
 					info.ParamNames = append(info.ParamNames, name)
 				}
 			}
@@ -194,6 +197,51 @@ func spelling(t dwarf.Type) string {
 		}
 		return ""
 	}
+}
+
+// pointerSpelling returns the spelling a raw pointer argument (requirements format 18 — uprobearg … ptr) is checked against (the same as
+// dwarfPointerSpelling in bpf-mlir's go/requirements): typedefs and qualifiers are stripped, "ptr" for a pointer of 8 bytes whose pointee is not a
+// pointer (void *, const char *, a struct pointer), "ptr(depth>=2,width=W)" when the pointee is a pointer (char **), "ptr(depth=1,width=W)" for
+// another width, "non-pointer" for anything else, and "" if unreadable.
+func pointerSpelling(t dwarf.Type) string {
+	t = stripQual(t)
+	p, ok := t.(*dwarf.PtrType)
+	if t == nil {
+		return ""
+	}
+	if !ok {
+		return "non-pointer"
+	}
+	width := p.ByteSize
+	if width <= 0 {
+		return ""
+	}
+	pointee := stripQual(p.Type)
+	if pointee == nil {
+		return ""
+	}
+	if _, deep := pointee.(*dwarf.PtrType); deep {
+		return fmt.Sprintf("ptr(depth>=2,width=%d)", width)
+	}
+	if width == 8 {
+		return "ptr"
+	}
+	return fmt.Sprintf("ptr(depth=1,width=%d)", width)
+}
+
+// stripQual strips typedefs and qualifiers (nil for a cycle or a missing type).
+func stripQual(t dwarf.Type) dwarf.Type {
+	for n := 0; n < 64 && t != nil; n++ {
+		switch u := t.(type) {
+		case *dwarf.TypedefType:
+			t = u.Type
+		case *dwarf.QualType:
+			t = u.Type
+		default:
+			return t
+		}
+	}
+	return nil
 }
 
 func isChar8(t dwarf.Type) bool {

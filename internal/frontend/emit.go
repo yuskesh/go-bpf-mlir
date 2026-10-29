@@ -137,11 +137,25 @@ type schemaProgram struct {
 	Note         string          `json:"note"`
 }
 
-// schemaTPField is one of a tracepoint program's fields (name, byte offset from the record start, integer type).
+// schemaTPField is one of a tracepoint program's fields (name, byte offset from the record start, integer type or user_str).
 type schemaTPField struct {
-	Name   string     `json:"name"`
-	Offset int64      `json:"offset"`
-	Type   *schemaInt `json:"type"`
+	Name   string `json:"name"`
+	Offset int64  `json:"offset"`
+	Type   any    `json:"type"` // *schemaInt, user_str, user_str_array or schemaTPArray
+}
+
+// schemaTPArray is the type of a tracepoint byte array field (bpf-mlir's {"kind": "array", "elem": "u8" | "i8", "n": N}).
+type schemaTPArray struct {
+	Kind string `json:"kind"`
+	Elem string `json:"elem"`
+	N    int64  `json:"n"`
+}
+
+func schemaByteElem(t IntType) string {
+	if t.Signed {
+		return "i8"
+	}
+	return "u8"
 }
 
 // hasArch reports whether kind carries arch in the schema and .mlir program (the kprobe family).
@@ -326,8 +340,12 @@ func buildSchema(maps []*BpfMap, records []*SharedABI, progs []*Program, globals
 			for _, n := range p.allParamOrder() {
 				if _, isStr := p.StrParams[n]; isStr {
 					sp.Params = append(sp.Params, schemaParam{N: n, Type: map[string]string{"kind": "user_str"}})
+				} else if _, isArr := p.StrArrParams[n]; isArr {
+					sp.Params = append(sp.Params, schemaParam{N: n, Type: map[string]string{"kind": "user_str_array"}}) // a `char **` (sysarg … strarray)
 				} else if _, isPtr := p.PtrParams[n]; isPtr {
-					sp.Params = append(sp.Params, schemaParam{N: n, Type: map[string]string{"kind": "ptr"}}) // a kprobe pointer argument
+					sp.Params = append(sp.Params, schemaParam{N: n, Type: map[string]string{"kind": "ptr"}}) // a kprobe / uprobe pointer argument
+				} else if _, isBuf := p.BufParams[n]; isBuf {
+					sp.Params = append(sp.Params, schemaParam{N: n, Type: map[string]string{"kind": "user_buf"}}) // a uprobe user buffer (read only by user.read)
 				} else {
 					sp.Params = append(sp.Params, schemaParam{N: n, Type: schemaIntOf(p.Params[n])})
 				}
@@ -341,7 +359,15 @@ func buildSchema(maps []*BpfMap, records []*SharedABI, progs []*Program, globals
 			sp.Arch = kprobeArch // bpf_perf_event_data offsets depend on the arch's pt_regs (no params)
 		}
 		for _, f := range p.TPFields { // the tagged fields of the tracepoint event struct (ascending offset)
-			sp.Fields = append(sp.Fields, schemaTPField{Name: f.Name, Offset: f.Offset, Type: schemaIntOf(f.Int)})
+			var t any = schemaIntOf(f.Int)
+			if f.Str {
+				t = map[string]string{"kind": "user_str"} // a `char *` field (the requirements' tpfield … strptr)
+			} else if f.StrArr {
+				t = map[string]string{"kind": "user_str_array"} // a `char **` field (tpfield … strarray)
+			} else if f.Arr > 0 {
+				t = schemaTPArray{Kind: "array", Elem: schemaByteElem(f.Int), N: f.Arr} // a fixed byte array (tpfield … [N]u8 / [N]i8)
+			}
+			sp.Fields = append(sp.Fields, schemaTPField{Name: f.Name, Offset: f.Offset, Type: t})
 		}
 		if p.ProgramType == "tp_btf" {
 			sp.Args = p.argsSchema() // a positional array (null for arguments not read)

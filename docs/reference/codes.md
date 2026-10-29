@@ -51,7 +51,7 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
   - `testdata/cga_notcg` `main.go:11:8` — A.TaskUnder undefined (type bpf.Array[uint32, uint64] has no field or method TaskUnder)
   - `testdata/cgdev_lsmret` `main.go:7:9` — cannot use bpf.LSMAllow (constant 0 of int32 type bpf.LSMRet) as bpf.CgroupAction value
   - `testdata/cgdev_write` `main.go:7:6` — ctx.SetMajor undefined (type *bpf.CgroupDeviceContext has no field or method SetMajor)
-  - … and 59 more (`negativeCases`)
+  - … and 60 more (`negativeCases`)
 
 ## GB001 UnsupportedConstruct
 
@@ -64,8 +64,8 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
   - `testdata/cw_int_star` `main.go:9:2` — assignment target must be a local variable
   - `testdata/fentry_comm_outside` `main.go:9:6` — bpf.CurrentComm() may only be the value of a [16]uint8 field in a ring buffer event literal
   - `testdata/fmodret_select` `main.go:13:22` — are both evaluated before the choice
-  - `testdata/ksess_range` `main.go:9:9` — the kprobe_session program returns 2, outside 0..1
-  - … and 30 more (`negativeCases`)
+  - `testdata/kp_value` `main.go:21:3` — variable c has type github.com/yuskesh/go-bpf-mlir/internal/frontend/testdata/kp_value.SockCommon, which is not in the supported subset
+  - … and 35 more (`negativeCases`)
 
 ## GB002 UnsupportedCall
 
@@ -107,10 +107,10 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
   - `testdata/cx_redirect` `main.go:9:7` — Ports's methods are statements
   - `testdata/deref_in_else` `main.go:10:21` — use of p outside the checked branch
   - `testdata/iter_seq_bare` `main.go:15:6` — SeqFile.Write needs the checked pointer of `if s := ctx.Seq(); s != nil { … }`
-  - `testdata/kt_fentry_nocheck` `main.go:26:7` — bpf.FentryArg returns a pointer that may be NULL
-  - `testdata/kt_ptr_else_use` `main.go:31:11` — the kernel pointer is NULL in the else branch
-  - `testdata/kt_ptr_unchecked` `main.go:28:10` — the kernel pointer field c.MM may be NULL — read it only as `if m := c.MM; m != nil
-  - … and 24 more (`negativeCases`)
+  - `testdata/kad_field` `main.go:21:32` — the kernel pointer field p.MM may be NULL — pass the checked variable
+  - `testdata/kad_unchecked` `main.go:15:31` — the argument of bpf.KernelAddr may be NULL — check it first
+  - `testdata/kp_ptr_mid` `main.go:26:17` — the kernel pointer field p.Path.Dentry may be NULL — read it only as `if m := p.Path.Dentry; m != nil
+  - … and 28 more (`negativeCases`)
 
 ## GB006 NonConstant
 
@@ -141,13 +141,13 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
 - **Verdict**: rejected
 - **Fix**: a program is a top-level `func(ctx *bpf.<Context>) <verdict type>` (fentry / fexit have no result and take a directive) — docs/reference/kinds.md
 - **Examples that stop**:
-  - `testdata/cga_skbctx` `main.go:11:17` — the first argument of CG.SkbUnder must be the program's context parameter
-  - `testdata/cga_skbxdp` `main.go:13:5` — CG.SkbUnder asks about the skb's socket — it may only be called in the body of a tc program
-  - `testdata/cgdev_directive` `main.go:7:1` — //gobpf:cgroup_device is only allowed right above
-  - `testdata/ext_argtype` `main.go:19:16` — bpf.ExtArg[int32](ctx, 0): argument 0 of g is uint32 — the type argument must be identical
-  - `testdata/ext_noprog` `main.go:17:1` — someone_elses_prog is not a program of this package
-  - `testdata/ext_notcalled` `main.go:21:1` — program tgt does not call g
-  - … and 134 more (`negativeCases`)
+  - `testdata/argv_after_block` `main.go:20:16` — UserStrArray.At(1) is read where At(0)'s present on the same array is not known true
+  - `testdata/argv_alias` `main.go:16:7` — bind a bpf.UserStrArray from its source
+  - `testdata/argv_else` `main.go:20:17` — UserStrArray.At(1) is read where At(0)'s present on the same array is not known true
+  - `testdata/argv_index_range` `main.go:16:22` — the index of UserStrArray.At must be a constant 0..19
+  - `testdata/argv_index_var` `main.go:17:22` — the index of UserStrArray.At must be a constant 0..19
+  - `testdata/argv_loop` `main.go:17:15` — UserStrArray.At may not be inside a loop
+  - … and 168 more (`negativeCases`)
 
 ## GB009 MapDeclShape
 
@@ -204,12 +204,12 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
 - **Fix**: a subprogram takes up to five arguments (integers and bool, the program context as the first argument, one packet window, one borrowed map value) and one result, ending in `return <value>` — move the form the message names (forwarding, a global's context, an attach-specific read, …) to the caller
 - **Examples that stop**:
   - `testdata/act_callee` `main.go:7:6` — the sched_act context cannot be passed to a subprogram
+  - `testdata/argv_subprog` `main.go:7:6` — the ksyscall context cannot be passed to a subprogram
   - `testdata/cw_lock_rec` `main.go:14:6` — subprogram setN parameter p: a pointer to something other than a map value
   - `testdata/cx_adjust` `main.go:9:9` — ctx.AdjustHead changes the packet (it invalidates every window), which a subprogram that takes the context cannot do
   - `testdata/cx_fentry_arg` `main.go:15:10` — bpf.FentryArg reads an attach-specific value, which a subprogram that takes the context cannot do
   - `testdata/cx_fexit` `main.go:8:6` — the fexit context cannot be passed to a subprogram
-  - `testdata/cx_global` `main.go:9:6` — global subprogram etype takes the program context — only a static subprogram can
-  - … and 40 more (`negativeCases`)
+  - … and 41 more (`negativeCases`)
 
 ## GB014 WindowIndex
 
@@ -235,7 +235,7 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
 
 - **Meaning**: outside the shared type shape (SharedABI — record / array)
 - **Verdict**: rejected
-- **Fix**: a record is a named struct of the same package whose fields are fixed-width integers or arrays of them, every field has a `schema:"…"` tag, and padding is an explicit `_ [N]byte`
+- **Fix**: a record is a named struct of the same package whose fields are fixed-width integers or arrays of them, every field has a `schema:"…"` tag, and padding is an explicit `_ [N]byte`. When ebpf-compile stops a function at the BPF stack limit and that function writes a ring buffer event whose record has `_` padding, generate names the padding as the likely cause: give the padding field a name (for example `Pad uint32` with a schema tag) so the event is stored straight into the reservation
 - **Examples that stop**:
   - `testdata/addinit_record_value` `main.go:16:6` — H.AddOrInit needs an integer value, but H holds the record Val
   - `testdata/hash_key_var` `main.go:14:6` — variable k holds the record Key
@@ -243,7 +243,7 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
   - `testdata/kstr_no_status` `main.go:20:10` — Events.OutputKernelStr needs exactly one int64 field tagged `gobpf:"kernelstr_status"` in the event record Ev, found 0
   - `testdata/kstr_not_bytes` `main.go:21:10` — the `gobpf:"kernelstr"` field Name of Ev must be a byte array ([N]uint8 / [N]byte — kernel.read_str writes the string there)
   - `testdata/kstr_status_int32` `main.go:22:10` — the `gobpf:"kernelstr_status"` field St of Ev must be int64 (OutputKernelStr writes the raw status of kernel.read_str there)
-  - … and 25 more (`negativeCases`)
+  - … and 33 more (`negativeCases`)
 
 ## GB017 StatusIgnored
 
@@ -257,7 +257,7 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
   - `testdata/kl_pop_discard` `main.go:8:2` — the value and the raw status of Q.Pop are discarded
   - `testdata/kl_push_discard` `main.go:8:2` — the status of Q.Push is discarded
   - `testdata/kr_discard` `main.go:7:2` — the value and the raw status of bpf.KprobeRead are discarded
-  - … and 15 more (`negativeCases`)
+  - … and 16 more (`negativeCases`)
 
 ## GB018 LoopShape
 
@@ -271,7 +271,7 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
   - `testdata/cl_product72` `main.go:23:8` — the loop counts along Prog → loop 8 → inner → loop 9 multiply to 72 — at most 64
   - `testdata/cl_product_twolevel` `main.go:25:8` — the loop counts along Prog → loop 4 → mid → leaf → loop 32 multiply to 128 — at most 64
   - `testdata/cl_ring_callee_loop` `main.go:17:6` — emit is called inside a loop and reaches the ring buffer (burst → loop 4 → emit → Events.Output)
-  - … and 44 more (`negativeCases`)
+  - … and 47 more (`negativeCases`)
 
 ## GB019 ExportedBPFFunc
 
@@ -370,7 +370,7 @@ The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdi
   - `testdata/fi_idx_var` `main.go:10:37` — the argument index of bpf.FentryArgInt must be a constant 0..11
   - `testdata/fi_in_if` `main.go:10:3` — bpf.FentryArgInt must be a top-level statement of the fentry program body
   - `testdata/fi_sub` `main.go:8:7` — bpf.FentryArgInt may only be used in the body of a fentry program
-  - … and 22 more (`negativeCases`)
+  - … and 29 more (`negativeCases`)
 
 ## GB028 NonAtomicRMW
 

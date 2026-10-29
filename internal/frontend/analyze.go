@@ -165,7 +165,9 @@ type Program struct {
 	Params       map[int]IntType // the type of the n-th kprobe argument (KprobeArg[T] — collected by lowering)
 	paramPos     map[int]token.Pos
 	StrParams    map[int]token.Pos // uprobe user string arguments (UprobeStr)
-	PtrParams    map[int]token.Pos // kprobe pointer arguments (uint64(KprobeArg[uintptr]) — values not dereferenced)
+	StrArrParams map[int]token.Pos // ksyscall user string array arguments (KsyscallStrArray)
+	PtrParams    map[int]token.Pos // kprobe / uprobe pointer arguments (uint64(KprobeArg[uintptr]) / uint64(UprobeArg[uintptr]) — values not dereferenced)
+	BufParams    map[int]token.Pos // uprobe user buffer arguments (UprobeBuf — read only by OutputBuf)
 	Binary       string            // the uprobe directive's path (generate time only — not in generated files)
 	BinarySHA256 string            // the sha256 of the uprobe target binary (the schema's binary_sha256)
 	// usdt: the schema semaphore ("required" / "none") and max_points (the number of points in the binary) decided from the note; USDTSpec reports whether the program
@@ -175,6 +177,7 @@ type Program struct {
 	USDTSpec      bool
 	usdtPoints    []requirements.USDTPoint
 	uprobeParams  map[string][]string // uprobe target symbol → DWARF argument type spellings (excluding results — per listed symbol for uprobe_multi)
+	uprobePtrs    map[string][]string // uprobe target symbol → DWARF argument pointer spellings (parallel to uprobeParams — "ptr" for a depth-1, 8-byte pointer)
 	args          map[int]tpArgDecl   // declarations of tp_btf / fentry argument i (TPArg, TPArgInt, FentryArg)
 	dirPos        token.Pos
 	Maps          []*BpfMap
@@ -1038,8 +1041,9 @@ var programValueTakers = map[string]bool{
 	gobpfPkg + ".RunSyscall":          true,
 	gobpfPkg + ".AttachExt":           true,
 
-	gobpfPkg + ".WithUprobeTarget": true, // Load input — a program function and a target path
-	gobpfPkg + ".Objects.Program":  true,
+	gobpfPkg + ".WithUprobeTarget":    true, // Load input — a program function and a target path
+	gobpfPkg + ".WithUprobeDebugFile": true, // Load input — a program function and its separate debug file
+	gobpfPkg + ".Objects.Program":     true,
 }
 
 // programTaker returns the API name if call is a call of an API that may take a program function value.

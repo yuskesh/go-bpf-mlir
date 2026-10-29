@@ -31,6 +31,24 @@ Each go-bpf-mlir version is built and tested with one bpf-mlir pair, and the pai
 
 ## Version history
 
+### v0.18.0 — user strings, kernel field paths, split DWARF and uprobe buffers
+
+- **Scope**: 85 feature groups (78 in v0.17.0) — new: user strings from tracepoint fields and ksyscall arguments (G79), argv arrays (G80), tracepoint byte arrays (G81),
+  kernel field paths through embedded kernel types (G82), kernel pointer addresses (G83), split DWARF of uprobe targets (G84), uprobe user buffers and raw pointers (G85).
+  9 of the 85 are limited ([reference/scope.md](reference/scope.md))
+- **New API**: `bpf.KsyscallStr`, `bpf.KsyscallStrArray`, `bpf.UserStrArray` (`At`), `bpf.KernelAddr`, `bpf.UserBuf`, `bpf.UprobeBuf`, `RingBuf.OutputBuf`;
+  tracepoint event fields of type `bpf.UserStr`, `bpf.UserStrArray`, `[N]byte` / `[N]int8`; `gobpf.WithUprobeDebugRoot`, `gobpf.WithUprobeDebugFile`
+- **Breaking — `bpf.UserStr` is 8 bytes** (it was 0):
+  - What: `bpf.UserStr` now has the size and alignment of a pointer (8 bytes)
+  - Why: a `char *` field of a tracepoint event struct is a `bpf.UserStr`, and the event struct must have the C layout
+  - How to migrate: only Go code that measures a struct holding a `bpf.UserStr` is affected — a `bpf.UserStr` is never a field of a map or ring buffer record (generate rejects it)
+- **Changed**: `bpf.UprobeArg` accepts `uintptr` (`uint64(bpf.UprobeArg[uintptr](ctx, n))` — a raw pointer value checked against the binary's DWARF)
+- **Fixed**: the non-root hint after a refused capability probe names the program kinds and their capabilities (root only for tracepoint and ksyscall, CAP_SYS_ADMIN for uprobe / uretprobe / usdt, CAP_PERFMON for the other tracing kinds)
+- **Fixed**: an ebpf-compile stack-limit failure in a function that writes a ring buffer event with `_` padding gets a GB016 naming the padding as the likely cause (name the padding field)
+- **Reason codes**: unchanged (GB000 to GB029)
+- **Dependencies**: unchanged — the bpf-mlir pair above (v1.20.0, commit d3e13842), cilium/ebpf upstream main b5a5a86f, Go 1.26 or later, LLVM / MLIR 23.1.1
+- **Getting it**: `go get github.com/yuskesh/go-bpf-mlir@v0.18.0`, then run `go generate` again (only the provenance line of the generated files changes)
+
 ### v0.17.0 — the first public version
 
 - **First public version.** The versions before it (v0.1.0 to v0.16.0) were development versions and were not published, so this entry does not list changes from them. The promises above (the frozen reason code table, old generated files failing by name) hold from this version

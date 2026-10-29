@@ -42,6 +42,7 @@ The bpf identifiers the frontend accepts (apiTable in `internal/frontend/table.g
 | `bpf.InnerKind` | both | — | InnerKind is the kind of the inner map. |
 | `bpf.InnerLRUHash` | both | — | Inner map kinds (constants only). |
 | `bpf.Kernel` | both | — | Kernel is the marker of a local declaration of a kernel struct (size 0). |
+| `bpf.KernelAddr` | eBPF side | — | KernelAddr is eBPF side only: all 64 address bits of a checked kernel pointer p as an integer (ebpf.kptr.addr — bpf-mlir v1.16). |
 | `bpf.KernelStr` | both | — | KernelStr is the type of a `char *` field of a kernel local-type struct (strptr of bpf-mlir's schema kernel_types). |
 | `bpf.Key32` | both | — | Key32 is the key type of array maps. |
 | `bpf.KprobeArg` | eBPF side | `ebpf.kprobe.arg` | KprobeArg is eBPF side only: reads the register of the kprobe function's argument n (a constant 1 to 6 — x86_64 register passing) as T. |
@@ -54,6 +55,8 @@ The bpf identifiers the frontend accepts (apiTable in `internal/frontend/table.g
 | `bpf.KprobeValue` | both | — | KprobeValue is the type of KprobeArg: an integer of 8 to 64 bits or uintptr (a pointer argument — a value that is not dereferenced). |
 | `bpf.KsyscallArg` | eBPF side | `ebpf.ksyscall.arg` | KsyscallArg is eBPF side only: the value of syscall argument n (a constant 1..6). |
 | `bpf.KsyscallContext` | both | — | KsyscallContext is the context of a ksyscall program (the wrapper's pt_regs). |
+| `bpf.KsyscallStr` | eBPF side | `ebpf.ksyscall.arg` | KsyscallStr is eBPF side only: syscall argument n (a constant 1..6) as a pointer to a user string (if the argument is not a single-level `char *` in the tracefs `sys_enter_<name>` format, gobpf.Load stops). |
+| `bpf.KsyscallStrArray` | eBPF side | `ebpf.ksyscall.arg` | KsyscallStrArray is eBPF side only: syscall argument n (a constant 1..6) as an array of user string pointers (argv — if the argument is not a two-level `char **` in the tracefs `sys_enter_<name>` format, gobpf.Load stops). |
 | `bpf.KtimeNs` | eBPF side | `ebpf.ktime.ns` | KtimeNs is eBPF side only: the monotonic clock in ns (helper ktime_get_ns). |
 | `bpf.LPMKey4` | user space | — | LPMKey4 is the key layout of LPMTrie4 (the schema record gobpf_lpm_key4). |
 | `bpf.LPMValue` | both | — | LPMValue is the value type of LPMTrie4 (a 32 / 64-bit integer — the same rule as integer values of the hash family). |
@@ -139,9 +142,11 @@ The bpf identifiers the frontend accepts (apiTable in `internal/frontend/table.g
 | `bpf.USDTArg` | eBPF side | `ebpf.usdt.arg` | USDTArg is eBPF side only: reads argument n (a constant 1..12) of the USDT point now running as T, and returns the value and the raw status (0 is success; −ENOENT if the point has no spec; a failed read of a memory location gives probe_read_user's value; on failure the value is 0). |
 | `bpf.USDTContext` | both | — | USDTContext is the context of a usdt program (struct pt_regs). |
 | `bpf.UprobeArg` | eBPF side | `ebpf.uprobe.arg` | UprobeArg is eBPF side only: reads argument n (a constant 1 to 6 — SysV register passing) of the user function as T (the same rules as KprobeArg — T is in the schema's params, and if it differs from the binary's DWARF type, generate and gobpf.Load stop. |
+| `bpf.UprobeBuf` | eBPF side | `ebpf.uprobe.arg` | UprobeBuf is eBPF side only: argument n as a pointer to a user buffer (if the DWARF type is not a single-level 8-byte pointer — void *, const char *, a struct pointer — generate and gobpf.Load stop; char ** and integers stop). |
 | `bpf.UprobeContext` | both | — | UprobeContext is the context of a uprobe program (struct pt_regs). |
 | `bpf.UprobeStr` | eBPF side | `ebpf.uprobe.arg` | UprobeStr is eBPF side only: argument n as a pointer to a user string (if the DWARF type is not a single-level pointer to an 8-bit char — const char * — generate and gobpf.Load stop). |
-| `bpf.UserStr` | both | — | UserStr is a pointer to a user string (a uprobe argument — bpf-mlir's !ebpf.user_str). |
+| `bpf.UserBuf` | both | — | UserBuf is a pointer to a user buffer (bpf-mlir's !ebpf.user_buf) read by length rather than up to a NUL: a uprobe argument (UprobeBuf). |
+| `bpf.UserStr` | both | — | UserStr is a pointer to a user string (bpf-mlir's !ebpf.user_str): a uprobe argument (UprobeStr), a ksyscall argument (KsyscallStr), a tracepoint event field of this type (`F bpf.UserStr` with tag `tp:"<name>"` — a `char *` field of the tracefs format) or an element of a UserStrArray (the s of UserStrArray.At). |
 | `bpf.WithLock` | eBPF side | `ebpf.spin.region` | WithLock is eBPF side only: a closed critical region that takes lock, runs f, and releases it (bpf-mlir's ebpf.spin.region — forgetting to unlock cannot happen by construction). |
 | `bpf.XDPAborted` | both | `ebpf.verdict` | xdp verdicts (the same values as the UAPI enum xdp_action). |
 | `bpf.XDPAction` | both | — | XDPAction is the verdict of an xdp program. |
@@ -704,9 +709,10 @@ The bpf identifiers the frontend accepts (apiTable in `internal/frontend/table.g
 | `bpf.RingBuf.GobpfTypes` | user space | — | GobpfTypes is an internal API of the gobpf runtime — a ring buffer has no key (nil) — the value is the event type. |
 | `bpf.RingBuf.MaxEntries` | user space | — | MaxEntries is the ring buffer size (bytes — a constant power of 2, 4096 or more. |
 | `bpf.RingBuf.Output` | eBPF side | `ebpf.ringbuf.reserve`, `ebpf.ringbuf.if_reserved`, `ebpf.ringbuf.store_record`, `ebpf.ringbuf.submit` | Output is eBPF side only: outputs v as a ring buffer event, and **the return value is whether the reservation succeeded and was submitted** (false means the ring buffer was full and the event was dropped). |
+| `bpf.RingBuf.OutputBuf` | eBPF side | `ebpf.ringbuf.reserve`, `ebpf.ringbuf.if_reserved`, `ebpf.record.make`, `ebpf.ringbuf.store_record`, `ebpf.user.read`, `ebpf.ringbuf.store_field`, `ebpf.ringbuf.submit` | OutputBuf is eBPF side only (uprobe programs): reserves and writes event v, reads min(n, N) bytes of the user buffer b into the exactly one `[N]byte` / `[N]int8` field with tag `gobpf:"userbuf"` in V's record (N 1..8192 — helper probe_read_user, called once), and submits. |
 | `bpf.RingBuf.OutputKernelStr` | eBPF side | `ebpf.ringbuf.reserve`, `ebpf.ringbuf.if_reserved`, `ebpf.record.make`, `ebpf.ringbuf.store_record`, `ebpf.kernel.read_str`, `ebpf.ringbuf.store_field`, `ebpf.ringbuf.submit` | OutputKernelStr is eBPF side only (tracing programs — where a checked kernel pointer exists): reserves and writes event v, reads the kernel string s into the exactly one `[N]byte` (1 ≤ N ≤ 64) field of V's record with tag `gobpf:"kernelstr"` (helper probe_read_kernel_str — bpf-mlir's ebpf.kernel.read_str), writes st into the exactly one int64 field with tag `gobpf:"kernelstr_status"`, and submits. |
-| `bpf.RingBuf.OutputStr` | eBPF side | `ebpf.ringbuf.reserve`, `ebpf.ringbuf.if_reserved`, `ebpf.record.make`, `ebpf.ringbuf.store_record`, `ebpf.user.read_str`, `ebpf.ringbuf.store_field`, `ebpf.ringbuf.submit` | OutputStr is eBPF side only (uprobe programs): reserves and writes event v, reads the user string s into the exactly one `[N]byte` field with tag `gobpf:"userstr"` in V's record (helper probe_read_user_str), and submits. |
-| `bpf.RingBuf.OutputStrOrDiscard` | eBPF side | `ebpf.ringbuf.reserve`, `ebpf.ringbuf.if_reserved`, `ebpf.record.make`, `ebpf.ringbuf.store_record`, `ebpf.user.read_str`, `ebpf.if`, `ebpf.ringbuf.discard`, `ebpf.ringbuf.submit` | OutputStrOrDiscard is eBPF side only (uprobe programs): like OutputStr it reserves and writes event v and reads the user string s, but **an event it could not read (st < 0) is discarded without submit** (bpf-mlir's conditional discard inside present). |
+| `bpf.RingBuf.OutputStr` | eBPF side | `ebpf.ringbuf.reserve`, `ebpf.ringbuf.if_reserved`, `ebpf.record.make`, `ebpf.ringbuf.store_record`, `ebpf.user.read_str`, `ebpf.ringbuf.store_field`, `ebpf.ringbuf.submit` | OutputStr is eBPF side only (uprobe, tracepoint and ksyscall programs): reserves and writes event v, reads the user string s into the exactly one `[N]byte` field with tag `gobpf:"userstr"` in V's record (helper probe_read_user_str), and submits. |
+| `bpf.RingBuf.OutputStrOrDiscard` | eBPF side | `ebpf.ringbuf.reserve`, `ebpf.ringbuf.if_reserved`, `ebpf.record.make`, `ebpf.ringbuf.store_record`, `ebpf.user.read_str`, `ebpf.if`, `ebpf.ringbuf.discard`, `ebpf.ringbuf.submit` | OutputStrOrDiscard is eBPF side only (uprobe, tracepoint and ksyscall programs): like OutputStr it reserves and writes event v and reads the user string s, but **an event it could not read (st < 0) is discarded without submit** (bpf-mlir's conditional discard inside present). |
 | `bpf.RingBuf.Reserve` | eBPF side | — | Reserve is eBPF side only: reserves a region of V's size in the ring buffer and, if it got one, returns the reservation handle and true (otherwise nil and false). |
 | `bpf.RingBuf.Submit` | eBPF side | — | Submit is eBPF side only: commits reservation e and shows it to the reader (this consumes the reservation — e cannot be used afterwards). |
 
@@ -979,6 +985,13 @@ The bpf identifiers the frontend accepts (apiTable in `internal/frontend/table.g
 | `bpf.UserRingBuf` | both | — | UserRingBuf is a ring buffer from user space to the kernel (BPF_MAP_TYPE_USER_RINGBUF): |
 | `bpf.UserRingBuf.Drain` | eBPF side | `ebpf.user_ringbuf.drain`, `ebpf.user_ringbuf.callback`, `ebpf.user_ringbuf.done`, `ebpf.dynptr.read` | Drain is eBPF side only: passes the written samples, oldest first, one at a time to callback cb (helper bpf_user_ringbuf_drain, flags 0). |
 
+## UserStrArray
+
+| Identifier | Side | Lowering | Description |
+|---|---|---|---|
+| `bpf.UserStrArray` | both | — | UserStrArray is an array of user string pointers (bpf-mlir's !ebpf.user_str_array — argv, a `char **`): a ksyscall argument (KsyscallStrArray) or a tracepoint event field of this type (`F bpf.UserStrArray` with tag `tp:"<name>"` — a `char **` field of the tracefs format). |
+| `bpf.UserStrArray.At` | eBPF side | `ebpf.user.str_at` | At is eBPF side only: element i (a constant 0..19) of the array — s is the element's user string pointer, status is the raw status of reading the 8-byte slot (helper probe_read_user: 0, or a negative errno when the slot is unreadable) and present is whether the slot was read and is not NULL (s is a NULL pointer when present is false). |
+
 ## Window
 
 | Identifier | Side | Lowering | Description |
@@ -1089,7 +1102,7 @@ Every identifier of the gobpf package is user space only (using one on the eBPF 
 | `gobpf.LoadCollectionSpec` | LoadCollectionSpec parses the embedded ELF (without touching the kernel). |
 | `gobpf.LoadOption` | LoadOption is an extra input to Load. |
 | `gobpf.LoadUnchecked` | LoadUnchecked loads the embedded ELF **without checking the requirements**. |
-| `gobpf.LoaderDecl` | LoaderDecl is gobpf's loader declaration (bpf-mlir's requirements_format.md): cilium v0.22 (requirements.Cilium022) with **ksyscall_attach changed to prefix, usdt_attach to ref_ctr, sockmap_attach to prog_attach, lsm_cgroup_load to btf_id (the local cilium fork looks up the BTF id through upstream PR #2115), and fsession_load to btf_id (PR #2108)**. |
+| `gobpf.LoaderDecl` | LoaderDecl is gobpf's loader declaration (bpf-mlir's requirements_format.md): the preset cilium-v0.22-usdt-ksyscall (cilium v0.22 with **ksyscall_attach changed to prefix and usdt_attach to ref_ctr**) with **sockmap_attach changed to prog_attach, lsm_cgroup_load to btf_id (the local cilium fork looks up the BTF id through upstream PR #2115), and fsession_load to btf_id (PR #2108)**. |
 | `gobpf.Map` | Map is the user's map variable (Var is a pointer to the variable) and the ELF's map symbol. |
 | `gobpf.Map.Pos` | position of the Go declaration (package-relative file:line:col — written by the generated file; check errors point to it) |
 | `gobpf.Map.Symbol` |  |
@@ -1173,4 +1186,6 @@ Every identifier of the gobpf package is user space only (using one on the eBPF 
 | `gobpf.UserRingWriter.Close` | Close unmaps the ring (later calls do nothing). |
 | `gobpf.UserRingWriter.Write` | Write writes v as one sample (the record's little-endian bytes). |
 | `gobpf.Version` | Version is the go-bpf-mlir version. |
+| `gobpf.WithUprobeDebugFile` | WithUprobeDebugFile passes the separate debug file of the target of the uprobe (or uretprobe, uprobe_multi, uretprobe_multi) program fn. |
+| `gobpf.WithUprobeDebugRoot` | WithUprobeDebugRoot sets the root of the build ID lookup of separate DWARF for the uprobe targets of Load: a target without .debug_info is checked against <dir>/.build-id/<xx>/<rest>.debug (bound by its GNU build ID and the CRC32 of its .gnu_debuglink — bpf-mlir's pre-load check). |
 | `gobpf.WithUprobeTarget` | WithUprobeTarget passes to Load the **run-time path** of the target binary of the uprobe (and uretprobe) program fn. |

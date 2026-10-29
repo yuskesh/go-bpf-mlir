@@ -93,6 +93,10 @@ func (l *lowerer) kptrStore(s *ast.AssignStmt) bool {
 		l.fail(Rejected, GB027KernelTypeShape, sel.Pos(), "the kernel struct field %s cannot be written — only a struct_ops program writes kernel fields", types.ExprString(sel))
 		return true
 	}
+	if _, sels, _ := l.kpathOf(s.Lhs[0]); len(sels) > 1 { // checkKptrUses reports it first; bpf-mlir's kfield.store takes one segment
+		l.fail(Rejected, GB027KernelTypeShape, sel.Pos(), "the kernel struct field path %s cannot be written — a struct_ops program writes only a field of the argument itself", types.ExprString(sel))
+		return true
+	}
 	if f.Kind != kfInt {
 		l.fail(Rejected, GB027KernelTypeShape, sel.Pos(), "the kernel struct field %s is not an integer — a struct_ops program writes integer fields only (ebpf.kfield.store)", types.ExprString(sel))
 		return true

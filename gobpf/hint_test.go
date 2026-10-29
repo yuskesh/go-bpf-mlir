@@ -85,19 +85,54 @@ func TestHintOnSavedVerifierLogs(t *testing.T) {
 	t.Logf("%d saved refusals (3 kernels × flowsample / voff / pkt) all get the CAP_PERFMON hint", n)
 }
 
-// The hint for the probe's EPERM is chosen by the object's program kinds — the CAP_PERFMON text with a fentry, the CAP_NET_ADMIN text with only XDP / tcx.
+// The hint for the probe's EPERM is chosen by the object's program kinds (probeKindNeeds) — root only, then CAP_SYS_ADMIN, then CAP_PERFMON, naming the kinds;
+// the generic CAP_NET_ADMIN text otherwise.
 func TestProbeHintByKind(t *testing.T) {
+	const p = hintProbePrefix
+	root := func(k string) string {
+		return p + "the object's " + k + " programs are root only: their argument check in Load reads the tracefs format, which a non-root loader cannot read, whatever its capabilities (docs/nonroot.md)"
+	}
+	sys := func(k string) string {
+		return p + "a non-root loader of the object's " + k + " programs needs CAP_BPF, CAP_PERFMON and CAP_SYS_ADMIN (the perf uprobe attach) (docs/nonroot.md)"
+	}
+	perf := func(k, also string) string {
+		return p + "a non-root loader of the object's " + k + " programs needs CAP_BPF and CAP_PERFMON" + also + " (docs/nonroot.md)"
+	}
+	for _, c := range []struct {
+		name  string
+		kinds []string
+		want  string
+	}{
+		{"xdp", []string{"xdp"}, hintProbePermission},
+		{"tracepoint", []string{"tracepoint"}, root("tracepoint")},
+		{"ksyscall", []string{"ksyscall", "ksyscall"}, root("ksyscall")},
+		{"uprobe", []string{"uprobe"}, sys("uprobe")},
+		{"uprobe and uretprobe", []string{"uprobe", "uretprobe", "uprobe"}, sys("uprobe / uretprobe")},
+		{"usdt", []string{"usdt"}, sys("usdt")},
+		{"fentry and fexit", []string{"fentry", "fexit"}, perf("fentry / fexit", "")},
+		{"xdp and fentry", []string{"xdp", "fentry"}, perf("fentry", "; its xdp programs also need CAP_NET_ADMIN")},
+		{"sk_skb and sk_msg", []string{"sk_skb", "sk_msg"}, hintProbePermission},
+		{"struct_ops", []string{"struct_ops"}, perf("struct_ops", "")},
+		{"perf_event", []string{"perf_event"}, perf("perf_event", "")},
+		{"ext", []string{"ext"}, perf("ext", "; its ext programs also need CAP_NET_ADMIN")},
+		{"tracepoint, xdp and uprobe", []string{"xdp", "uprobe", "tracepoint"}, root("tracepoint")},
+		{"syscall", []string{"syscall"}, hintProbePermission},
+		{"a kind outside the table", []string{"no_such_kind"}, hintProbePermission},
+	} {
+		reset(t)
+		var progs []Program
+		for i, k := range c.kinds {
+			progs = append(progs, Program{Symbol: fmt.Sprintf("p%d", i), Kind: k})
+		}
+		Register(Object{Programs: progs})
+		if got := probeHint(); got != c.want {
+			t.Errorf("%s:\n got  %q\n want %q", c.name, got, c.want)
+		}
+	}
 	reset(t)
-	Register(Object{Programs: []Program{{Symbol: "p", Kind: "xdp"}}})
 	if got := probeHint(); got != hintProbePermission {
-		t.Fatalf("xdp object: %q", got)
+		t.Errorf("no registered object: %q", got)
 	}
-	reset(t)
-	Register(Object{Programs: []Program{{Symbol: "p", Kind: "xdp"}, {Symbol: "f", Kind: "fentry", Attach: "do_sys_poll"}}})
-	if got := probeHint(); got != hintProbeFentry {
-		t.Fatalf("object with a fentry program: %q", got)
-	}
-	reset(t)
 }
 
 // The refused Go line is extracted from actual verifier logs of all three kernels (saved with %+v — bpf-mlir v0.6.0's line_info).

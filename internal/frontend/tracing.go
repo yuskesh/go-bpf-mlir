@@ -173,6 +173,10 @@ func (l *lowerer) kprobeArg(call *ast.CallExpr) (value, bool, bool) {
 		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the uprobe program %s is read as a user string at %s and as an integer here — one argument has one type", n, p.Symbol, posString(l.a.position(spos)))
 		return value{}, false, true
 	}
+	if bpos, isBuf := p.BufParams[n]; isBuf {
+		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the uprobe program %s is read as a user buffer at %s and as an integer here — one argument has one type", n, p.Symbol, posString(l.a.position(bpos)))
+		return value{}, false, true
+	}
 	if prev, seen := p.Params[n]; seen && prev != it {
 		l.fail(Rejected, GB008ProgramShape, call.Pos(), "argument %d of the %s program %s is read as %s here but as %s at %s — one argument has one type (schema params)", n, kind, p.Symbol, goIntName(it), goIntName(prev), posString(l.a.position(p.paramPos[n])))
 		return value{}, false, true
@@ -199,7 +203,13 @@ func (p *Program) allParamOrder() []int {
 	for n := range p.StrParams {
 		ns = append(ns, n)
 	}
+	for n := range p.StrArrParams {
+		ns = append(ns, n)
+	}
 	for n := range p.PtrParams {
+		ns = append(ns, n)
+	}
+	for n := range p.BufParams {
 		ns = append(ns, n)
 	}
 	sort.Ints(ns)
@@ -208,13 +218,19 @@ func (p *Program) allParamOrder() []int {
 
 // kprobePtrConv lowers `uint64(bpf.KprobeArg[uintptr](ctx, n))` (int64 too) — the raw 8-byte value of a kprobe pointer argument — to
 // `ebpf.kprobe.arg %ctx n : !ebpf.ctx<"kprobe"> -> i64` and sets the schema's params to `{"kind":"ptr"}`.
-// The value is never dereferenced (no read through it). handled reports whether e has this shape.
+// The value is never dereferenced (no read through it). handled reports whether e has this shape. `uint64(bpf.UprobeArg[uintptr](ctx, n))` of
+// a uprobe program is the same (`ebpf.uprobe.arg … -> i64` — the requirements' uprobearg … ptr, format 18).
 func (l *lowerer) kprobePtrConv(e *ast.CallExpr) (value, bool, bool) {
 	if len(e.Args) != 1 {
 		return value{}, false, false
 	}
 	call, ok := ast.Unparen(e.Args[0]).(*ast.CallExpr)
-	if !ok || l.callOp(call) != "kprobe_arg" || !isUintptr(l.a.info.Types[call].Type) {
+	if !ok || !isUintptr(l.a.info.Types[call].Type) {
+		return value{}, false, false
+	}
+	if op := l.callOp(call); op == "uprobe_arg" {
+		return l.uprobePtrConv(e, call)
+	} else if op != "kprobe_arg" {
 		return value{}, false, false
 	}
 	defer l.at(call.Pos())()

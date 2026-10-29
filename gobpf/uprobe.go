@@ -21,6 +21,32 @@ type LoadOption func(*loadConfig)
 
 type loadConfig struct {
 	uprobePaths map[uintptr]string // program function (value pointer) → the binary's path at run time
+	debugRoot   *string            // WithUprobeDebugRoot (nil — not given)
+	debugFiles  map[uintptr]string // program function (value pointer) → its separate debug file (WithUprobeDebugFile)
+}
+
+// WithUprobeDebugRoot sets the root of the build ID lookup of separate DWARF for the uprobe targets of Load: a target without .debug_info is
+// checked against <dir>/.build-id/<xx>/<rest>.debug (bound by its GNU build ID and the CRC32 of its .gnu_debuglink — bpf-mlir's pre-load
+// check). "" turns the lookup off. **Without this option the root is the live caps' UprobeDebugRoot — nil means /usr/lib/debug.** Giving
+// both this option and a non-nil UprobeDebugRoot in the caps is an error (Load does not pick one).
+func WithUprobeDebugRoot(dir string) LoadOption {
+	return func(c *loadConfig) {
+		c.debugRoot = &dir
+	}
+}
+
+// WithUprobeDebugFile passes the separate debug file of the target of the uprobe (or uretprobe, uprobe_multi, uretprobe_multi) program fn. It
+// replaces the build ID lookup for that program (a file that cannot be read is not followed by the lookup) and is bound by the same build ID and
+// CRC32 check. fn needs a WithUprobeTarget, and the caps must not already name a file for the same program.
+func WithUprobeDebugFile(fn any, path string) LoadOption {
+	return func(c *loadConfig) {
+		if c.debugFiles == nil {
+			c.debugFiles = map[uintptr]string{}
+		}
+		if v := reflect.ValueOf(fn); v.Kind() == reflect.Func {
+			c.debugFiles[v.Pointer()] = path
+		}
+	}
 }
 
 // WithUprobeTarget passes to Load the **run-time path** of the target binary of the uprobe (and uretprobe) program fn. With the fd opened from that path, Load
@@ -124,6 +150,9 @@ func prepareUprobes(obj *Object, caps requirements.Capabilities, cfg loadConfig,
 		}
 	}
 	if len(targets) == 0 {
+		if cfg.debugRoot != nil || len(cfg.debugFiles) > 0 {
+			return nil, nil, fmt.Errorf("gobpf.Load: WithUprobeDebugRoot / WithUprobeDebugFile given, but the object has no uprobe program")
+		}
 		return caps, nil, nil
 	}
 	lc, ok := caps.(livecaps.LiveCaps)
@@ -131,11 +160,53 @@ func prepareUprobes(obj *Object, caps requirements.Capabilities, cfg loadConfig,
 		closeAll()
 		return nil, nil, fmt.Errorf("gobpf.Load: uprobe targets need the live caps (livecaps.New()) — got %T", caps)
 	}
+	lc, err := withDebugOptions(obj, lc, cfg)
+	if err != nil {
+		closeAll()
+		return nil, nil, err
+	}
 	bins := map[string]*os.File{}
 	for s, t := range targets {
 		bins[s] = t.f
 	}
 	return uprobeCaps{LiveCaps: lc, bins: bins}, targets, nil
+}
+
+// withDebugOptions puts WithUprobeDebugRoot and WithUprobeDebugFile into a copy of the live caps (the caller's map is not changed). A field the
+// caps already set and an option for the same thing is an error, as is a debug file for a function that is not a uprobe program with a target.
+func withDebugOptions(obj *Object, lc livecaps.LiveCaps, cfg loadConfig) (livecaps.LiveCaps, error) {
+	if cfg.debugRoot != nil {
+		if lc.UprobeDebugRoot != nil {
+			return lc, fmt.Errorf("gobpf.Load: WithUprobeDebugRoot(%q) given, but the caps already set UprobeDebugRoot to %q — set one of them", *cfg.debugRoot, *lc.UprobeDebugRoot)
+		}
+		root := *cfg.debugRoot
+		lc.UprobeDebugRoot = &root
+	}
+	if len(cfg.debugFiles) == 0 {
+		return lc, nil
+	}
+	paths := map[string]string{}
+	for p, path := range lc.UprobeDebugPaths {
+		paths[p] = path
+	}
+	for fn, path := range cfg.debugFiles {
+		var prog *Program
+		for i := range obj.Programs {
+			p := &obj.Programs[i]
+			if reflect.ValueOf(p.Func).Pointer() == fn && p.Kind != "usdt" && cfg.uprobePaths[fn] != "" {
+				prog = p
+			}
+		}
+		if prog == nil {
+			return lc, fmt.Errorf("gobpf.Load: WithUprobeDebugFile(%s) names a function that is not a uprobe program with a WithUprobeTarget", path)
+		}
+		if old, ok := paths[prog.Symbol]; ok {
+			return lc, fmt.Errorf("gobpf.Load: WithUprobeDebugFile(%s, %s) given, but the caps already name %s for it — set one of them", prog.Symbol, path, old)
+		}
+		paths[prog.Symbol] = path
+	}
+	lc.UprobeDebugPaths = paths
+	return lc, nil
 }
 
 // UprobeTarget is AttachUprobe's run-time input (the binary is the fd passed to Load with WithUprobeTarget).

@@ -19,8 +19,8 @@ Create your own module and make the generator `gobpf` a tool of the module:
 
 ```sh manual
 go mod init example.com/myprog
-go get github.com/yuskesh/go-bpf-mlir@v0.17.0
-go get -tool github.com/yuskesh/go-bpf-mlir/cmd/gobpf@v0.17.0
+go get github.com/yuskesh/go-bpf-mlir@v0.18.0
+go get -tool github.com/yuskesh/go-bpf-mlir/cmd/gobpf@v0.18.0
 ```
 
 (These two blocks are not run by the check — the check runs the rest of this document against the go-bpf-mlir source tree it verifies.)

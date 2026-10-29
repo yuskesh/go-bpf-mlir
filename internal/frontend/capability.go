@@ -295,7 +295,7 @@ func (a *analyzer) callRequirement(call *ast.CallExpr, add func(Capability, toke
 	case *types.Func:
 		if inAPIPackage(o) {
 			if e, ok := lookupAPI(o); ok && e.side != sideUser {
-				if _, isStatus := statusOps[e.op]; isStatus || e.op == "lookup" || e.op == "update" || e.op == "atomic_add" || e.op == "output" || e.op == "count_drops" || e.op == "tail_call" || e.op == "tail_call_if" || e.op == "global_load" || e.op == "global_add" || e.op == "lpm_lookup" || e.op == "redirect_map" || e.op == "redirect_map_if" || e.op == "output_str" || e.op == "output_str_discard" || e.op == "output_kernel_str" || e.op == "stack_id" || e.op == "stack_id_reuse" || e.op == "stack_user_id" || e.op == "stack_user_id_reuse" || e.op == "perf_output" || e.op == "keyless_pop" || e.op == "keyless_peek" || e.op == "sk_assign" {
+				if _, isStatus := statusOps[e.op]; isStatus || e.op == "lookup" || e.op == "update" || e.op == "atomic_add" || e.op == "output" || e.op == "count_drops" || e.op == "tail_call" || e.op == "tail_call_if" || e.op == "global_load" || e.op == "global_add" || e.op == "lpm_lookup" || e.op == "redirect_map" || e.op == "redirect_map_if" || e.op == "output_str" || e.op == "output_str_discard" || e.op == "output_kernel_str" || e.op == "output_buf" || e.op == "stack_id" || e.op == "stack_id_reuse" || e.op == "stack_user_id" || e.op == "stack_user_id_reuse" || e.op == "perf_output" || e.op == "keyless_pop" || e.op == "keyless_peek" || e.op == "sk_assign" {
 					add(CapBPFMap, call.Pos(), "map operation %s", o.Name())
 				}
 				if strings.HasPrefix(e.op, "packet") {

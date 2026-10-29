@@ -29,10 +29,8 @@ func (e *HintError) Unwrap() error { return e.Err }
 // Hints for known non-root loader failures (docs/nonroot.md — measured on all three kernels).
 const (
 	hintProbePermission = "the target check's capability probe was refused (permission) before the embedded program was loaded — a non-root loader needs CAP_BPF and CAP_NET_ADMIN (docs/nonroot.md)"
-	// hintProbeFentry is for the probe's EPERM with an object that has a fentry program (the tracing program type probe needs CAP_PERFMON;
-	// CAP_NET_ADMIN is not needed — measured on all three kernels). An object with both XDP / tcx and fentry needs all of them.
-	hintProbeFentry = "the target check's capability probe was refused (permission) before the embedded program was loaded — a non-root loader of a fentry or fexit program needs CAP_BPF and CAP_PERFMON (and CAP_NET_ADMIN too if the object also has xdp or tcx programs) (docs/nonroot.md)"
-	hintPerfmon     = "the verifier refused pointer arithmetic for a non-root loader — a variable packet offset (ctx.Check with a non-constant offset), or on 6.x kernels a record array index whose constant default can reach the indexed access (a map value read into a variable before `if i < uint32(len(p.Arr))`), needs CAP_PERFMON in addition to CAP_BPF and CAP_NET_ADMIN (docs/nonroot.md)"
+	hintProbePrefix     = "the target check's capability probe was refused (permission) before the embedded program was loaded — "
+	hintPerfmon         = "the verifier refused pointer arithmetic for a non-root loader — a variable packet offset (ctx.Check with a non-constant offset), or on 6.x kernels a record array index whose constant default can reach the indexed access (a map value read into a variable before `if i < uint32(len(p.Arr))`), needs CAP_PERFMON in addition to CAP_BPF and CAP_NET_ADMIN (docs/nonroot.md)"
 )
 
 // withHint adds a hint to errors of a known shape (unknown errors are returned unchanged).
@@ -111,14 +109,114 @@ func nosuidHint() string {
 	return fmt.Sprintf("%s carries file capabilities (setcap) that are not in effect — it is on a nosuid mount, where the kernel ignores file capabilities at exec; move the executable to a mount without nosuid (many distributions mount /tmp nosuid) or pass the capabilities at start with setpriv (docs/tutorial.md section 2)", exe)
 }
 
-// probeHint chooses the hint for the probe's EPERM by the registered object's program kinds (the CAP_PERFMON text with a fentry).
+// kindNeed is what a non-root loader of one program kind needs, with the source of the fact: the kernel's rule (kernel/bpf/syscall.c at 7.1.8 —
+// is_net_admin_prog_type, lines 2764-2791, and is_perfmon_prog_type, lines 2795-2810, checked at BPF_PROG_LOAD, lines 2946-2949) or a measured row of docs/nonroot.md.
+type kindNeed struct {
+	root     bool // root only — a check in Load reads the tracefs format
+	sysAdmin bool // + CAP_SYS_ADMIN (the perf uprobe attach)
+	perfmon  bool
+	netAdmin bool
+	source   string
+}
+
+// probeKindNeeds holds every program kind the frontend emits. A kind missing from it gets the generic hint (no guessed class).
+var probeKindNeeds = map[string]kindNeed{
+	"tracepoint": {root: true, perfmon: true, source: "docs/nonroot.md: tracepoint programs are root only (the tpfield check reads the tracefs format — Unknown without root); syscall.c:2799 TRACEPOINT"},
+	"ksyscall":   {root: true, perfmon: true, source: "docs/nonroot.md: ksyscall programs (the sysarg check reads the tracefs format — Unknown without root); syscall.c:2798 KPROBE"},
+
+	"uprobe":    {sysAdmin: true, perfmon: true, source: "docs/nonroot.md: uprobe programs (CAP_SYS_ADMIN for the perf_uprobe attach); syscall.c:2798 KPROBE"},
+	"uretprobe": {sysAdmin: true, perfmon: true, source: "docs/nonroot.md: uretprobe programs (+ CAP_SYS_ADMIN, same as uprobe); syscall.c:2798 KPROBE"},
+	"usdt":      {sysAdmin: true, perfmon: true, source: "docs/nonroot.md: usdt programs (CAP_BPF + CAP_PERFMON + CAP_SYS_ADMIN — a perf uprobe); syscall.c:2798 KPROBE"},
+
+	"kprobe":          {perfmon: true, source: "syscall.c:2798 KPROBE"},
+	"kretprobe":       {perfmon: true, source: "syscall.c:2798 KPROBE"},
+	"kprobe_multi":    {perfmon: true, source: "syscall.c:2798 KPROBE"},
+	"kretprobe_multi": {perfmon: true, source: "syscall.c:2798 KPROBE"},
+	"kprobe_session":  {perfmon: true, source: "syscall.c:2798 KPROBE"},
+	"uprobe_multi":    {perfmon: true, source: "syscall.c:2798 KPROBE; docs/nonroot.md: uprobe_multi programs (no CAP_SYS_ADMIN — no perf_event_open)"},
+	"uretprobe_multi": {perfmon: true, source: "syscall.c:2798 KPROBE; docs/nonroot.md: uprobe_multi programs (no CAP_SYS_ADMIN — no perf_event_open)"},
+	"perf_event":      {perfmon: true, source: "syscall.c:2800 PERF_EVENT"},
+	"raw_tp":          {perfmon: true, source: "syscall.c:2801 RAW_TRACEPOINT"},
+	"raw_tp_writable": {perfmon: true, source: "syscall.c:2802 RAW_TRACEPOINT_WRITABLE"},
+	"fentry":          {perfmon: true, source: "syscall.c:2803 TRACING"},
+	"fexit":           {perfmon: true, source: "syscall.c:2803 TRACING"},
+	"fsession":        {perfmon: true, source: "syscall.c:2803 TRACING"},
+	"fmod_ret":        {perfmon: true, source: "syscall.c:2803 TRACING"},
+	"iter":            {perfmon: true, source: "syscall.c:2803 TRACING"},
+	"tp_btf":          {perfmon: true, source: "syscall.c:2803 TRACING"},
+	"lsm":             {perfmon: true, source: "syscall.c:2804 LSM"},
+	"lsm_s":           {perfmon: true, source: "syscall.c:2804 LSM"},
+	"lsm_cgroup":      {perfmon: true, source: "syscall.c:2804 LSM"},
+	"struct_ops":      {perfmon: true, source: "syscall.c:2805 STRUCT_OPS"},
+	"ext":             {perfmon: true, netAdmin: true, source: "syscall.c:2783 and 2806 EXT (both lists)"},
+
+	"sched_cls":        {netAdmin: true, source: "syscall.c:2767 SCHED_CLS"},
+	"sched_act":        {netAdmin: true, source: "syscall.c:2768 SCHED_ACT"},
+	"xdp":              {netAdmin: true, source: "syscall.c:2769 XDP"},
+	"lwt_in":           {netAdmin: true, source: "syscall.c:2770 LWT_IN"},
+	"lwt_out":          {netAdmin: true, source: "syscall.c:2771 LWT_OUT"},
+	"lwt_xmit":         {netAdmin: true, source: "syscall.c:2772 LWT_XMIT"},
+	"lwt_seg6local":    {netAdmin: true, source: "syscall.c:2773 LWT_SEG6LOCAL"},
+	"sk_skb":           {netAdmin: true, source: "syscall.c:2774 SK_SKB"},
+	"sk_msg":           {netAdmin: true, source: "syscall.c:2775 SK_MSG"},
+	"flow_dissector":   {netAdmin: true, source: "syscall.c:2776 FLOW_DISSECTOR"},
+	"cgroup_device":    {netAdmin: true, source: "syscall.c:2777 CGROUP_DEVICE"},
+	"cgroup_sock":      {netAdmin: true, source: "syscall.c:2778 CGROUP_SOCK"},
+	"cgroup_sock_addr": {netAdmin: true, source: "syscall.c:2779 CGROUP_SOCK_ADDR"},
+	"cgroup_sockopt":   {netAdmin: true, source: "syscall.c:2780 CGROUP_SOCKOPT"},
+	"cgroup_sysctl":    {netAdmin: true, source: "syscall.c:2781 CGROUP_SYSCTL"},
+	"sock_ops":         {netAdmin: true, source: "syscall.c:2782 SOCK_OPS"},
+	"netfilter":        {netAdmin: true, source: "syscall.c:2784 NETFILTER"},
+
+	"cgroup_skb":    {source: "syscall.c:2786 CGROUP_SKB (always unpriv — CAP_BPF only)"},
+	"sk_reuseport":  {source: "syscall.c:2788 SK_REUSEPORT (CAP_BPF only)"},
+	"socket_filter": {source: "syscall.c:2790 default (in neither list — CAP_BPF only)"},
+	"sk_lookup":     {source: "syscall.c:2790 and 2808 default (in neither list — CAP_BPF only)"},
+	"syscall":       {source: "syscall.c:2790 and 2808 default (in neither list — CAP_BPF only)"},
+}
+
+// probeHint chooses the hint for the probe's EPERM by the registered object's program kinds (probeKindNeeds): root only wins, then CAP_SYS_ADMIN,
+// then CAP_PERFMON, each naming the kinds that need it (and the kinds that also need CAP_NET_ADMIN). Otherwise the generic CAP_NET_ADMIN text.
 func probeHint() string {
-	if o, err := current(); err == nil {
-		for _, p := range o.Programs {
-			if isTracingKind(p.Kind) {
-				return hintProbeFentry
+	o, err := current()
+	if err != nil {
+		return hintProbePermission
+	}
+	var root, sys, perf, net []string
+	add := func(l []string, k string) []string {
+		for _, s := range l {
+			if s == k {
+				return l
 			}
 		}
+		return append(l, k)
+	}
+	for _, p := range o.Programs {
+		n, ok := probeKindNeeds[p.Kind]
+		switch {
+		case !ok:
+		case n.root:
+			root = add(root, p.Kind)
+		case n.sysAdmin:
+			sys = add(sys, p.Kind)
+		case n.perfmon:
+			perf = add(perf, p.Kind)
+		}
+		if ok && n.netAdmin {
+			net = add(net, p.Kind)
+		}
+	}
+	also := ""
+	if len(net) > 0 {
+		also = "; its " + strings.Join(net, " / ") + " programs also need CAP_NET_ADMIN"
+	}
+	switch {
+	case len(root) > 0:
+		return hintProbePrefix + "the object's " + strings.Join(root, " / ") + " programs are root only: their argument check in Load reads the tracefs format, which a non-root loader cannot read, whatever its capabilities (docs/nonroot.md)"
+	case len(sys) > 0:
+		return hintProbePrefix + "a non-root loader of the object's " + strings.Join(sys, " / ") + " programs needs CAP_BPF, CAP_PERFMON and CAP_SYS_ADMIN (the perf uprobe attach)" + also + " (docs/nonroot.md)"
+	case len(perf) > 0:
+		return hintProbePrefix + "a non-root loader of the object's " + strings.Join(perf, " / ") + " programs needs CAP_BPF and CAP_PERFMON" + also + " (docs/nonroot.md)"
 	}
 	return hintProbePermission
 }
