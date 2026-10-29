@@ -1,0 +1,3 @@
+--- FAIL: TestPacketWindow (0.01s)
+    pkt_test.go:74: Load: program Read: load program: permission denied: 100: (0f) r1 += r2: R1 has pointer with unsupported alu operation, pointer arithmetic with it prohibited for !root (104 line(s) omitted)
+FAIL

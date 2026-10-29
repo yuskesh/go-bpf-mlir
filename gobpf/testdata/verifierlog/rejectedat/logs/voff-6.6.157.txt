@@ -1,0 +1,45 @@
+program runProg: load program: permission denied:
+	reg type unsupported for arg#0 function runProg#1
+	0: R1=ctx(off=0,imm=0) R10=fp0
+	;
+	0: (b7) r2 = 0                        ; R2_w=0
+	1: (b7) r6 = 1                        ; R6_w=1
+	; voff.go:22
+	2: (61) r5 = *(u32 *)(r1 +4)          ; R1=ctx(off=0,imm=0) R5_w=pkt_end(off=0,imm=0)
+	3: (61) r4 = *(u32 *)(r1 +0)          ; R1=ctx(off=0,imm=0) R4_w=pkt(off=0,r=0,imm=0)
+	4: (bf) r0 = r4                       ; R0_w=pkt(off=0,r=0,imm=0) R4_w=pkt(off=0,r=0,imm=0)
+	5: (07) r0 += 15                      ; R0_w=pkt(off=15,r=0,imm=0)
+	6: (b7) r3 = 1                        ; R3_w=1
+	7: (b7) r8 = 0                        ; R8_w=0
+	8: (b7) r7 = 0                        ; R7_w=0
+	9: (2d) if r0 > r5 goto pc+33         ; R0_w=pkt(off=15,r=15,imm=0) R5_w=pkt_end(off=0,imm=0)
+	; voff.go:23
+	10: (71) r5 = *(u8 *)(r4 +12)         ; R4_w=pkt(off=0,r=15,imm=0) R5_w=scalar(umax=255,var_off=(0x0; 0xff))
+	11: (71) r3 = *(u8 *)(r4 +13)         ; R3_w=scalar(umax=255,var_off=(0x0; 0xff)) R4_w=pkt(off=0,r=15,imm=0)
+	12: (67) r3 <<= 8                     ; R3_w=scalar(umax=65280,var_off=(0x0; 0xff00))
+	13: (4f) r5 |= r3                     ; R3_w=scalar(umax=65280,var_off=(0x0; 0xff00)) R5_w=scalar()
+	14: (dc) r5 = be16 r5                 ; R5_w=scalar()
+	15: (b7) r3 = 1                       ; R3_w=1
+	; voff.go:23
+	16: (55) if r5 != 0x800 goto pc+26    ; R5_w=2048
+	17: (b7) r3 = 2                       ; R3_w=2
+	; voff.go:24
+	18: (71) r4 = *(u8 *)(r4 +14)         ; R4_w=scalar(umax=255,var_off=(0x0; 0xff))
+	; voff.go:24
+	19: (57) r4 &= 15                     ; R4_w=scalar(umax=15,var_off=(0x0; 0xf))
+	; voff.go:25
+	20: (b7) r5 = 5                       ; R5=5
+	; voff.go:25
+	21: (2d) if r5 > r4 goto pc+21        ; R4=scalar(umin=5,umax=15,var_off=(0x0; 0xf)) R5=5
+	22: (b7) r3 = 3                       ; R3_w=3
+	; voff.go:29
+	23: (67) r4 <<= 2                     ; R4_w=scalar(umin=20,umax=60,var_off=(0x0; 0x3c))
+	; voff.go:29
+	24: (07) r4 += 14                     ; R4_w=scalar(umin=34,umax=74,var_off=(0x2; 0x7c))
+	; voff.go:29
+	25: (25) if r4 > 0xfffb goto pc+17    ; R4_w=scalar(umin=34,umax=74,var_off=(0x2; 0x7c))
+	26: (61) r5 = *(u32 *)(r1 +4)         ; R1=ctx(off=0,imm=0) R5_w=pkt_end(off=0,imm=0)
+	27: (61) r1 = *(u32 *)(r1 +0)         ; R1_w=pkt(off=0,r=0,imm=0)
+	28: (0f) r1 += r4
+	R1 has pointer with unsupported alu operation, pointer arithmetic with it prohibited for !root
+	processed 29 insns (limit 1000000) max_states_per_insn 0 total_states 1 peak_states 1 mark_read 1

@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "complete",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [],
+    "maps": [
+      {
+        "symbol": "Counts",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 11,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Counts"
+      },
+      {
+        "symbol": "Parsers",
+        "kind": "prog_array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "max_entries": 2,
+        "flags": 0,
+        "record": "",
+        "slots": [
+          {
+            "index": 0,
+            "program": "ParseIPv4"
+          },
+          {
+            "index": 1,
+            "program": "ParseIPv6"
+          }
+        ],
+        "note": "Go var Parsers"
+      }
+    ],
+    "programs": [
+      {
+        "name": "Classify",
+        "kind": "xdp",
+        "attach_target": "",
+        "maps": [
+          "Counts",
+          "Parsers"
+        ],
+        "note": "Go func Classify"
+      },
+      {
+        "name": "ParseIPv4",
+        "kind": "xdp",
+        "attach_target": "",
+        "maps": [
+          "Counts"
+        ],
+        "note": "Go func ParseIPv4"
+      },
+      {
+        "name": "ParseIPv6",
+        "kind": "xdp",
+        "attach_target": "",
+        "maps": [
+          "Counts"
+        ],
+        "note": "Go func ParseIPv6"
+      }
+    ]
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

@@ -1,0 +1,23 @@
+package main
+
+import "github.com/yuskesh/go-bpf-mlir/bpf"
+
+type Ev struct {
+	A uint32 `schema:"a"`
+	B uint32 `schema:"b"`
+}
+
+var (
+	Events = bpf.RingBuf[Ev]{MaxEntries: 4096}
+	Last   = bpf.Array[uint32, Ev]{MaxEntries: 1}
+)
+
+func f(ctx *bpf.XDPContext) bpf.XDPAction {
+	if e, ok := Events.Reserve(); ok {
+		Last.Update(0, *e)
+		Events.Submit(e)
+	}
+	return bpf.XDPPass
+}
+
+func main() {}

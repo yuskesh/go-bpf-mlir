@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "complete",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [
+      {
+        "symbol": "Event",
+        "id": 0,
+        "size": 24,
+        "min_size": 24,
+        "alignment": 8,
+        "required_through": "",
+        "note": "Go type Event",
+        "fields": [
+          {
+            "name": "pid",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Pid",
+            "type": {
+              "kind": "int",
+              "bits": 32,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 4
+            }
+          },
+          {
+            "name": "tgid",
+            "offset": 4,
+            "expose": "int",
+            "note": "Go field Tgid",
+            "type": {
+              "kind": "int",
+              "bits": 32,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 4
+            }
+          },
+          {
+            "name": "ns",
+            "offset": 8,
+            "expose": "int",
+            "note": "Go field Ns",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "stack",
+            "offset": 16,
+            "expose": "int",
+            "note": "Go field Stack",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": true,
+              "endianness": "little",
+              "alignment": 8
+            }
+          }
+        ]
+      }
+    ],
+    "maps": [
+      {
+        "symbol": "Stacks",
+        "kind": "stack_trace",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "array",
+          "count": 32,
+          "element": {
+            "kind": "int",
+            "bits": 64,
+            "signed": false,
+            "endianness": "little",
+            "alignment": 8
+          }
+        },
+        "max_entries": 1024,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Stacks"
+      },
+      {
+        "symbol": "Events",
+        "kind": "perf_event_array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "max_entries": 0,
+        "flags": 0,
+        "record": "Event",
+        "note": "Go var Events"
+      },
+      {
+        "symbol": "Drops",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 2,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Drops"
+      }
+    ],
+    "programs": [
+      {
+        "name": "OnPoll",
+        "kind": "fentry",
+        "attach_target": "do_sys_poll",
+        "maps": [
+          "Stacks",
+          "Events",
+          "Drops"
+        ],
+        "note": "Go func OnPoll"
+      }
+    ],
+    "globals": [
+      {
+        "name": "Target",
+        "section": "rodata",
+        "type": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "note": "Go var Target (bpf.Config)"
+      }
+    ]
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

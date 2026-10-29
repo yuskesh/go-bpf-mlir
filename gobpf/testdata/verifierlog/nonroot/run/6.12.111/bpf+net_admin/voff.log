@@ -1,0 +1,3 @@
+--- FAIL: TestVariableOffset (0.03s)
+    voff_test.go:104: Load: program Run: load program: permission denied: 28: (0f) r1 += r4: R1 has pointer with unsupported alu operation, pointer arithmetic with it prohibited for !root (32 line(s) omitted)
+FAIL

@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "complete",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [],
+    "maps": [
+      {
+        "symbol": "Other",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 3,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Other"
+      }
+    ],
+    "programs": [
+      {
+        "name": "CountPort",
+        "kind": "xdp",
+        "attach_target": "",
+        "maps": [
+          "Other"
+        ],
+        "note": "Go func CountPort"
+      }
+    ],
+    "globals": [
+      {
+        "name": "Port",
+        "section": "rodata",
+        "type": {
+          "kind": "int",
+          "bits": 16,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 2
+        },
+        "note": "Go var Port (bpf.Config)"
+      },
+      {
+        "name": "Hits",
+        "section": "bss",
+        "type": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "note": "Go var Hits (bpf.Global)"
+      }
+    ]
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

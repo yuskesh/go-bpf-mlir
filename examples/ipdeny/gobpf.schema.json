@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "complete",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [
+      {
+        "symbol": "gobpf_lpm_key4",
+        "id": 0,
+        "size": 8,
+        "min_size": 8,
+        "alignment": 4,
+        "required_through": "",
+        "note": "Go type bpf.LPMKey4",
+        "fields": [
+          {
+            "name": "prefixlen",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field PrefixLen",
+            "type": {
+              "kind": "int",
+              "bits": 32,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 4
+            }
+          },
+          {
+            "name": "addr",
+            "offset": 4,
+            "expose": "int",
+            "note": "Go field Addr",
+            "type": {
+              "kind": "array",
+              "count": 4,
+              "element": {
+                "kind": "int",
+                "bits": 8,
+                "signed": false,
+                "endianness": "little",
+                "alignment": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "maps": [
+      {
+        "symbol": "Rules",
+        "kind": "lpm_trie",
+        "key": {
+          "kind": "record_ref",
+          "symbol": "gobpf_lpm_key4"
+        },
+        "value": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "max_entries": 1024,
+        "flags": 1,
+        "record": "",
+        "note": "Go var Rules"
+      },
+      {
+        "symbol": "Stats",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 4,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Stats"
+      }
+    ],
+    "programs": [
+      {
+        "name": "Filter",
+        "kind": "xdp",
+        "attach_target": "",
+        "maps": [
+          "Rules",
+          "Stats"
+        ],
+        "note": "Go func Filter"
+      }
+    ]
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

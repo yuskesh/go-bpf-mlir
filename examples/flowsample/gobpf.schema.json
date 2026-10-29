@@ -1,0 +1,531 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "complete",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [
+      {
+        "symbol": "Addrs",
+        "id": 0,
+        "size": 8,
+        "min_size": 8,
+        "alignment": 1,
+        "required_through": "",
+        "note": "Go type Addrs",
+        "fields": [
+          {
+            "name": "src",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Src",
+            "type": {
+              "kind": "array",
+              "count": 4,
+              "element": {
+                "kind": "int",
+                "bits": 8,
+                "signed": false,
+                "endianness": "little",
+                "alignment": 1
+              }
+            }
+          },
+          {
+            "name": "dst",
+            "offset": 4,
+            "expose": "int",
+            "note": "Go field Dst",
+            "type": {
+              "kind": "array",
+              "count": 4,
+              "element": {
+                "kind": "int",
+                "bits": 8,
+                "signed": false,
+                "endianness": "little",
+                "alignment": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "symbol": "Event",
+        "id": 1,
+        "size": 12,
+        "min_size": 12,
+        "alignment": 2,
+        "required_through": "",
+        "note": "Go type Event",
+        "fields": [
+          {
+            "name": "len",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Len",
+            "type": {
+              "kind": "int",
+              "bits": 16,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 2
+            }
+          },
+          {
+            "name": "ethertype",
+            "offset": 2,
+            "expose": "int",
+            "note": "Go field EtherType",
+            "type": {
+              "kind": "int",
+              "bits": 16,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 2
+            }
+          },
+          {
+            "name": "proto",
+            "offset": 4,
+            "expose": "int",
+            "note": "Go field Proto",
+            "type": {
+              "kind": "int",
+              "bits": 8,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 1
+            }
+          },
+          {
+            "name": "ttl",
+            "offset": 5,
+            "expose": "int",
+            "note": "Go field TTL",
+            "type": {
+              "kind": "int",
+              "bits": 8,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 1
+            }
+          },
+          {
+            "name": "src",
+            "offset": 8,
+            "expose": "int",
+            "note": "Go field Src",
+            "type": {
+              "kind": "array",
+              "count": 4,
+              "element": {
+                "kind": "int",
+                "bits": 8,
+                "signed": false,
+                "endianness": "little",
+                "alignment": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "symbol": "FlowKey",
+        "id": 2,
+        "size": 16,
+        "min_size": 16,
+        "alignment": 2,
+        "required_through": "",
+        "note": "Go type FlowKey",
+        "fields": [
+          {
+            "name": "addr",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Addr",
+            "type": {
+              "kind": "record_ref",
+              "symbol": "Addrs"
+            }
+          },
+          {
+            "name": "port",
+            "offset": 8,
+            "expose": "int",
+            "note": "Go field Port",
+            "type": {
+              "kind": "record_ref",
+              "symbol": "Ports"
+            }
+          },
+          {
+            "name": "proto",
+            "offset": 12,
+            "expose": "int",
+            "note": "Go field Proto",
+            "type": {
+              "kind": "int",
+              "bits": 8,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 1
+            }
+          }
+        ]
+      },
+      {
+        "symbol": "FlowLast",
+        "id": 3,
+        "size": 4,
+        "min_size": 4,
+        "alignment": 2,
+        "required_through": "",
+        "note": "Go type FlowLast",
+        "fields": [
+          {
+            "name": "len",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Len",
+            "type": {
+              "kind": "int",
+              "bits": 16,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 2
+            }
+          },
+          {
+            "name": "ttl",
+            "offset": 2,
+            "expose": "int",
+            "note": "Go field TTL",
+            "type": {
+              "kind": "int",
+              "bits": 8,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 1
+            }
+          }
+        ]
+      },
+      {
+        "symbol": "Hdr",
+        "id": 4,
+        "size": 4,
+        "min_size": 4,
+        "alignment": 2,
+        "required_through": "",
+        "note": "Go type Hdr",
+        "fields": [
+          {
+            "name": "len",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Len",
+            "type": {
+              "kind": "int",
+              "bits": 16,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 2
+            }
+          },
+          {
+            "name": "proto",
+            "offset": 2,
+            "expose": "int",
+            "note": "Go field Proto",
+            "type": {
+              "kind": "int",
+              "bits": 8,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 1
+            }
+          },
+          {
+            "name": "ttl",
+            "offset": 3,
+            "expose": "int",
+            "note": "Go field TTL",
+            "type": {
+              "kind": "int",
+              "bits": 8,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 1
+            }
+          }
+        ]
+      },
+      {
+        "symbol": "Ports",
+        "id": 5,
+        "size": 4,
+        "min_size": 4,
+        "alignment": 2,
+        "required_through": "",
+        "note": "Go type Ports",
+        "fields": [
+          {
+            "name": "src",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Src",
+            "type": {
+              "kind": "int",
+              "bits": 16,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 2
+            }
+          },
+          {
+            "name": "dst",
+            "offset": 2,
+            "expose": "int",
+            "note": "Go field Dst",
+            "type": {
+              "kind": "int",
+              "bits": 16,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 2
+            }
+          }
+        ]
+      },
+      {
+        "symbol": "ProtoStats",
+        "id": 6,
+        "size": 16,
+        "min_size": 16,
+        "alignment": 8,
+        "required_through": "",
+        "note": "Go type ProtoStats",
+        "fields": [
+          {
+            "name": "packets",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Packets",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "bytes",
+            "offset": 8,
+            "expose": "int",
+            "note": "Go field Bytes",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          }
+        ]
+      },
+      {
+        "symbol": "Seen",
+        "id": 7,
+        "size": 8,
+        "min_size": 8,
+        "alignment": 2,
+        "required_through": "",
+        "note": "Go type Seen",
+        "fields": [
+          {
+            "name": "hdr",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Hdr",
+            "type": {
+              "kind": "record_ref",
+              "symbol": "Hdr"
+            }
+          },
+          {
+            "name": "src",
+            "offset": 4,
+            "expose": "int",
+            "note": "Go field Src",
+            "type": {
+              "kind": "array",
+              "count": 4,
+              "element": {
+                "kind": "int",
+                "bits": 8,
+                "signed": false,
+                "endianness": "little",
+                "alignment": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "maps": [
+      {
+        "symbol": "Counts",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 8,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Counts"
+      },
+      {
+        "symbol": "LastSeen",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "record_ref",
+          "symbol": "Seen"
+        },
+        "max_entries": 8,
+        "flags": 0,
+        "record": "",
+        "note": "Go var LastSeen"
+      },
+      {
+        "symbol": "Events",
+        "kind": "ringbuf",
+        "max_entries": 65536,
+        "flags": 0,
+        "record": "Event",
+        "note": "Go var Events"
+      },
+      {
+        "symbol": "SizeHist",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 8,
+        "flags": 0,
+        "record": "",
+        "note": "Go var SizeHist"
+      },
+      {
+        "symbol": "PerProto",
+        "kind": "percpu_array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "record_ref",
+          "symbol": "ProtoStats"
+        },
+        "max_entries": 8,
+        "flags": 0,
+        "record": "",
+        "note": "Go var PerProto"
+      },
+      {
+        "symbol": "Flows",
+        "kind": "hash",
+        "key": {
+          "kind": "record_ref",
+          "symbol": "FlowKey"
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 1024,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Flows"
+      },
+      {
+        "symbol": "Last",
+        "kind": "lru_hash",
+        "key": {
+          "kind": "record_ref",
+          "symbol": "FlowKey"
+        },
+        "value": {
+          "kind": "record_ref",
+          "symbol": "FlowLast"
+        },
+        "max_entries": 1024,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Last"
+      }
+    ],
+    "programs": [
+      {
+        "name": "Sample",
+        "kind": "xdp",
+        "attach_target": "",
+        "maps": [
+          "Counts",
+          "LastSeen",
+          "SizeHist",
+          "PerProto",
+          "Flows",
+          "Last"
+        ],
+        "note": "Go func Sample"
+      }
+    ]
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

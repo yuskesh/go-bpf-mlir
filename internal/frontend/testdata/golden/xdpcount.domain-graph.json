@@ -1,0 +1,70 @@
+{
+  "package": "github.com/yuskesh/go-bpf-mlir/examples/xdpcount",
+  "nodes": [
+    {
+      "func": "CountPackets",
+      "domain": "ebpf",
+      "root": true,
+      "kind": "xdp",
+      "pos": "main.go:32:6",
+      "membership": [
+        "bpf"
+      ],
+      "requires": [
+        "bpf.map"
+      ]
+    },
+    {
+      "func": "main",
+      "domain": "user",
+      "pos": "main.go:40:6",
+      "membership": [
+        "user"
+      ]
+    },
+    {
+      "func": "printCounts",
+      "domain": "user",
+      "pos": "main.go:93:6",
+      "membership": [
+        "user"
+      ]
+    },
+    {
+      "func": "runSelftest",
+      "domain": "user",
+      "pos": "main.go:104:6",
+      "membership": [
+        "user"
+      ]
+    },
+    {
+      "func": "ifindexOf",
+      "domain": "user",
+      "pos": "main.go:140:6",
+      "membership": [
+        "user"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "main",
+      "to": "CountPackets",
+      "kind": "funcvalue",
+      "via": "gobpf.AttachXDP",
+      "pos": "main.go:78:34"
+    },
+    {
+      "from": "runSelftest",
+      "to": "CountPackets",
+      "kind": "funcvalue",
+      "via": "gobpf.Objects.Program",
+      "pos": "main.go:105:28"
+    }
+  ],
+  "maps": [
+    "Counts"
+  ],
+  "diagnostics": []
+}

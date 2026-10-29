@@ -1,0 +1,27 @@
+program runProg: load program: permission denied:
+	arg#0 reference type('UNKNOWN ') size cannot be determined: -22
+	0: R1=ctx() R10=fp0
+	;  @ ebpf-schema:0
+	0: (b7) r7 = 0                        ; R7_w=0
+	; idxdef.go:23 @ idxdef.go:23
+	1: (63) *(u32 *)(r10 -20) = r7        ; R7_w=0 R10=fp0 fp-24=0000????
+	2: (bf) r2 = r10                      ; R2_w=fp0 R10=fp0
+	3: (07) r2 += -20                     ; R2_w=fp-20
+	4: (18) r1 = 0x0                      ; R1_w=map_ptr(map=Ctl,ks=4,vs=4)
+	6: (85) call bpf_map_lookup_elem#1    ; R0_w=map_value_or_null(id=1,map=Ctl,ks=4,vs=4)
+	7: (b7) r6 = 0                        ; R6_w=0
+	8: (15) if r0 == 0x0 goto pc+1 10: R0=0 R6=0 R7=0 R10=fp0 fp-24=mmmm????
+	; idxdef.go:27 @ idxdef.go:27
+	10: (63) *(u32 *)(r10 -16) = r7       ; R7=0 R10=fp0 fp-16=????0
+	11: (bf) r2 = r10                     ; R2_w=fp0 R10=fp0
+	12: (07) r2 += -16                    ; R2_w=fp-16
+	13: (18) r1 = 0x0                     ; R1_w=map_ptr(map=M,ks=4,vs=32)
+	15: (85) call bpf_map_lookup_elem#1   ; R0_w=map_value_or_null(id=4,map=M,ks=4,vs=32)
+	16: (b7) r1 = 999                     ; R1_w=999
+	17: (15) if r0 == 0x0 goto pc+4       ; R0_w=map_value(map=M,ks=4,vs=32)
+	; idxdef.go:28 @ idxdef.go:28
+	18: (25) if r6 > 0x7 goto pc+3        ; R6=0
+	19: (67) r6 <<= 2                     ; R6_w=0
+	20: (0f) r0 += r6
+	R0 tried to add from different maps, paths or scalars, pointer arithmetic with it prohibited for !root
+	processed 57 insns (limit 1000000) max_states_per_insn 1 total_states 4 peak_states 4 mark_read 1

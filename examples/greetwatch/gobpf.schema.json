@@ -1,0 +1,226 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "complete",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [
+      {
+        "symbol": "Greeting",
+        "id": 0,
+        "size": 64,
+        "min_size": 64,
+        "alignment": 8,
+        "required_through": "",
+        "note": "Go type Greeting",
+        "fields": [
+          {
+            "name": "stack",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Stack",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": true,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "build",
+            "offset": 8,
+            "expose": "int",
+            "note": "Go field Build",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": true,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "pid",
+            "offset": 16,
+            "expose": "int",
+            "note": "Go field Pid",
+            "type": {
+              "kind": "int",
+              "bits": 32,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 4
+            }
+          },
+          {
+            "name": "n",
+            "offset": 20,
+            "expose": "int",
+            "note": "Go field N",
+            "type": {
+              "kind": "int",
+              "bits": 32,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 4
+            }
+          },
+          {
+            "name": "name",
+            "offset": 24,
+            "expose": "int",
+            "note": "Go field Name",
+            "type": {
+              "kind": "array",
+              "count": 32,
+              "element": {
+                "kind": "int",
+                "bits": 8,
+                "signed": false,
+                "endianness": "little",
+                "alignment": 1
+              }
+            }
+          },
+          {
+            "name": "status",
+            "offset": 56,
+            "expose": "int",
+            "note": "Go field Status",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": true,
+              "endianness": "little",
+              "alignment": 8
+            }
+          }
+        ]
+      }
+    ],
+    "maps": [
+      {
+        "symbol": "Greetings",
+        "kind": "ringbuf",
+        "max_entries": 65536,
+        "flags": 0,
+        "record": "Greeting",
+        "note": "Go var Greetings"
+      },
+      {
+        "symbol": "Stats",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 3,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Stats"
+      },
+      {
+        "symbol": "Stacks",
+        "kind": "stack_trace",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "array",
+          "count": 32,
+          "element": {
+            "kind": "int",
+            "bits": 64,
+            "signed": false,
+            "endianness": "little",
+            "alignment": 8
+          }
+        },
+        "max_entries": 256,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Stacks"
+      },
+      {
+        "symbol": "Builds",
+        "kind": "stack_trace",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "array",
+          "count": 32,
+          "element": {
+            "kind": "stack_build_id"
+          }
+        },
+        "max_entries": 256,
+        "flags": 32,
+        "record": "",
+        "note": "Go var Builds"
+      }
+    ],
+    "programs": [
+      {
+        "name": "OnGreet",
+        "kind": "uprobe",
+        "attach_target": "greet",
+        "maps": [
+          "Stats",
+          "Stacks",
+          "Builds"
+        ],
+        "arch": "x86_64",
+        "params": [
+          {
+            "n": 1,
+            "type": {
+              "kind": "user_str"
+            }
+          },
+          {
+            "n": 2,
+            "type": {
+              "kind": "int",
+              "bits": 32,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 4
+            }
+          }
+        ],
+        "binary_sha256": "5160137176b835a89d380205a16397466ead422c1879bdf1b77120e284184d89",
+        "note": "Go func OnGreet"
+      }
+    ]
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

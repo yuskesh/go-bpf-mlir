@@ -1,0 +1,236 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "complete",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [
+      {
+        "symbol": "Ev",
+        "id": 0,
+        "size": 32,
+        "min_size": 32,
+        "alignment": 8,
+        "required_through": "",
+        "note": "Go type Ev",
+        "fields": [
+          {
+            "name": "pid_tgid",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field PidTgid",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "ns",
+            "offset": 8,
+            "expose": "int",
+            "note": "Go field Ns",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "comm",
+            "offset": 16,
+            "expose": "int",
+            "note": "Go field Comm",
+            "type": {
+              "kind": "array",
+              "count": 16,
+              "element": {
+                "kind": "int",
+                "bits": 8,
+                "signed": false,
+                "endianness": "little",
+                "alignment": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "maps": [
+      {
+        "symbol": "Calls",
+        "kind": "hash",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 4096,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Calls"
+      },
+      {
+        "symbol": "Watch",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 1,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Watch"
+      },
+      {
+        "symbol": "Stat",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 4,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Stat"
+      },
+      {
+        "symbol": "Rets",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 4,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Rets"
+      },
+      {
+        "symbol": "Errnos",
+        "kind": "hash",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 64,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Errnos"
+      },
+      {
+        "symbol": "Events",
+        "kind": "ringbuf",
+        "max_entries": 65536,
+        "flags": 0,
+        "record": "Ev",
+        "note": "Go var Events"
+      }
+    ],
+    "programs": [
+      {
+        "name": "onPoll",
+        "kind": "fentry",
+        "attach_target": "do_sys_poll",
+        "maps": [
+          "Calls",
+          "Watch",
+          "Stat"
+        ],
+        "note": "Go func onPoll"
+      },
+      {
+        "name": "onPollRet",
+        "kind": "fexit",
+        "attach_target": "do_sys_poll",
+        "nargs": 3,
+        "ret": {
+          "kind": "int",
+          "bits": 32,
+          "signed": true,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "maps": [
+          "Watch",
+          "Stat",
+          "Rets",
+          "Errnos"
+        ],
+        "note": "Go func onPollRet"
+      },
+      {
+        "name": "onSelftest",
+        "kind": "fentry",
+        "attach_target": "bpf_fentry_test1",
+        "maps": [
+          "Stat"
+        ],
+        "note": "Go func onSelftest"
+      }
+    ]
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

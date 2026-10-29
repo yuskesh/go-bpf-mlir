@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "complete",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [],
+    "maps": [
+      {
+        "symbol": "Cwd",
+        "kind": "hash",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 4096,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Cwd"
+      },
+      {
+        "symbol": "Dir",
+        "kind": "hash",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 4096,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Dir"
+      }
+    ],
+    "programs": [
+      {
+        "name": "OnOpen",
+        "kind": "kprobe",
+        "attach_target": "do_sys_openat2",
+        "maps": [
+          "Cwd",
+          "Dir"
+        ],
+        "arch": "x86_64",
+        "params": [
+          {
+            "n": 1,
+            "type": {
+              "kind": "int",
+              "bits": 32,
+              "signed": true,
+              "endianness": "little",
+              "alignment": 4
+            }
+          }
+        ],
+        "note": "Go func OnOpen"
+      }
+    ],
+    "globals": [
+      {
+        "name": "Target",
+        "section": "rodata",
+        "type": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "note": "Go var Target (bpf.Config)"
+      }
+    ]
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

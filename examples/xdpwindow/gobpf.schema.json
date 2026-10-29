@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "complete",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [
+      {
+        "symbol": "Tally",
+        "id": 0,
+        "size": 24,
+        "min_size": 24,
+        "alignment": 8,
+        "required_through": "",
+        "note": "Go type Tally",
+        "fields": [
+          {
+            "name": "lock",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field Lock",
+            "type": {
+              "kind": "spin_lock"
+            }
+          },
+          {
+            "name": "packets",
+            "offset": 8,
+            "expose": "int",
+            "note": "Go field Packets",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "large",
+            "offset": 16,
+            "expose": "int",
+            "note": "Go field Large",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          }
+        ]
+      },
+      {
+        "symbol": "Win",
+        "id": 1,
+        "size": 40,
+        "min_size": 40,
+        "alignment": 8,
+        "required_through": "",
+        "note": "Go type Win",
+        "fields": [
+          {
+            "name": "t",
+            "offset": 0,
+            "expose": "int",
+            "note": "Go field T",
+            "type": {
+              "kind": "timer"
+            }
+          },
+          {
+            "name": "arm_ns",
+            "offset": 16,
+            "expose": "int",
+            "note": "Go field ArmNs",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "closed_ns",
+            "offset": 24,
+            "expose": "int",
+            "note": "Go field ClosedNs",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "closed",
+            "offset": 32,
+            "expose": "int",
+            "note": "Go field Closed",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          }
+        ]
+      }
+    ],
+    "maps": [
+      {
+        "symbol": "Tally1",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "record_ref",
+          "symbol": "Tally"
+        },
+        "max_entries": 1,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Tally1"
+      },
+      {
+        "symbol": "Wins",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "record_ref",
+          "symbol": "Win"
+        },
+        "max_entries": 1,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Wins"
+      },
+      {
+        "symbol": "Late",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 1,
+        "flags": 0,
+        "record": "",
+        "note": "Go var Late"
+      }
+    ],
+    "programs": [
+      {
+        "name": "Count",
+        "kind": "xdp",
+        "attach_target": "",
+        "maps": [
+          "Tally1",
+          "Wins",
+          "Late"
+        ],
+        "note": "Go func Count"
+      }
+    ],
+    "globals": [
+      {
+        "name": "WindowNs",
+        "section": "rodata",
+        "type": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "note": "Go var WindowNs (bpf.Config)"
+      }
+    ]
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

@@ -1,0 +1,27 @@
+go-bpf-mlir
+Copyright (c) 2026 Yusuke Shinozaki
+
+go-bpf-mlir is licensed under Apache-2.0 WITH LLVM-exception. See LICENSE.
+
+Included source:
+- The Go binding packages of bpf-mlir (bindrt, requirements, layout, livecaps,
+  the internal core, kload, tpattach and usdtattach packages, and ebpf-bindgen),
+  copied from bpf-mlir commit d3e13842326f4dd2006b2f5528a3c9b6f409caf7 (the
+  commit of the bpf-mlir v1.20.0 source release, which does not ship them) with
+  their import paths rewritten. bpf-mlir is Copyright (c) 2026 Yusuke Shinozaki
+  and licensed under Apache-2.0 WITH LLVM-exception.
+
+Fetched dependencies, not included in this source tree:
+- github.com/cilium/ebpf v0.22.1-0.20261027100858-b5a5a86f850a: MIT License.
+  https://github.com/cilium/ebpf/blob/b5a5a86f850a29988d77b1e626fe981705032020/LICENSE
+- golang.org/x/mod v0.42.0: BSD-3-Clause.
+  https://github.com/golang/mod/blob/v0.42.0/LICENSE
+- golang.org/x/sync v0.24.0: BSD-3-Clause.
+  https://github.com/golang/sync/blob/v0.24.0/LICENSE
+- golang.org/x/sys v0.49.0: BSD-3-Clause.
+  https://github.com/golang/sys/blob/v0.49.0/LICENSE
+- golang.org/x/tools v0.52.0: BSD-3-Clause.
+  https://github.com/golang/tools/blob/v0.52.0/LICENSE
+
+Building the eBPF side needs ebpf-compile from the bpf-mlir v1.20.0 source
+release and LLVM / MLIR 23.1.1, which are not included.
