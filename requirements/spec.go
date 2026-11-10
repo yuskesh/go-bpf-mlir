@@ -37,20 +37,36 @@ var RowKinds = []RowKind{
 	{"argtag", 4, 6},
 	{"tailslot", 4, 7},
 	{"farg", 4, 8},
-	{"ctxaccess", 7, 9},   // Context field reads/writes.
-	{"tpfield", 6, 11},    // trace_tp event field, checked against tracefs format.
-	{"extret", 4, 11},     // freplace replacement argument count and return type.
-	{"extarg", 4, 11},     // freplace replacement integer argument type.
-	{"structop", 4, 11},   // Struct member implemented by trace_struct_ops.
-	{"mtarget", 4, 12},    // Function/symbol i in a multi-probe family.
-	{"usdtsem", 3, 12},    // USDT semaphore-presence declaration.
-	{"usdtarg", 4, 12},    // USDT argument n width and sign.
-	{"innermap", 8, 12},   // Inner template immediately after an array_of_maps/hash_of_maps row.
-	{"kfunc", 4, 13},      // Program-named kfunc signature; 4..9 fields (RowMaxFields).
-	{"sysarg", 4, 13},     // ksyscall syscall argument n type.
-	{"mtargetarg", 5, 13}, // Multi target i argument n type, after all N mtarget rows.
-	{"tpbuf", 3, 14},      // Writable raw tracepoint args[0] must be signed i32*.
+	{"ctxaccess", 7, 9},      // Context field reads/writes.
+	{"tpfield", 6, 11},       // trace_tp event field, checked against tracefs format.
+	{"extret", 4, 11},        // freplace replacement argument count and return type.
+	{"extarg", 4, 11},        // freplace replacement integer argument type.
+	{"structop", 4, 11},      // Struct member implemented by trace_struct_ops.
+	{"mtarget", 4, 12},       // Function/symbol i in a multi-probe family.
+	{"usdtsem", 3, 12},       // USDT semaphore-presence declaration.
+	{"usdtarg", 4, 12},       // USDT argument n width and sign.
+	{"innermap", 8, 12},      // Inner template immediately after an array_of_maps/hash_of_maps row.
+	{"arena", 2, 29},         // an arena map (after its map row); the loader must keep addr_space_cast and mmap it at map_extra.
+	{"kfunc", 4, 13},         // Program-named kfunc signature; 4..9 fields (RowMaxFields).
+	{"sysarg", 4, 13},        // ksyscall syscall argument n type.
+	{"mtargetarg", 5, 13},    // Multi target i argument n type, after all N mtarget rows.
+	{"tpbuf", 3, 14},         // Writable raw tracepoint args[0] must be signed i32*.
+	{"enumval", 5, 20},       // Kernel enum constant value of a program.
+	{"fibflags", 4, 21},      // bpf_fib_lookup flag name and mask per program.
+	{"datakptr", 2, 23},      // a .data.<name> section of hidden kptr globals (loader must not mmap it).
+	{"ksymvar", 5, 24},       // a per-CPU typed ksym VAR (slot type, weak / strong); 5 fields, or more with a guarded suffix.
+	{"kconfig", 4, 24},       // a CONFIG_* extern (value type, weak / strong); never guarded.
+	{"guard", 4, 24},         // an existence guard (ksym / type / field) numbered 0, 1, … in row order.
+	{"coreenum", 4, 26},      // a kernel enum constant a program reads through a CO-RE enum value relocation (existence only).
+	{"funcret", 3, 27},       // a fexit attach's return type only (ctx.func_ret — no argument count); exclusive with retsig.
+	{"kstructsize", 3, 28},   // an embedded kernel struct of N bytes (bpf_cpumask); every row checked against the target size.
+	{"helper_target", 8, 31}, // well-typed helper acceptance at the actual target.
+	{"sleepable", 2, 32},     // a sleepable trace_fentry attach (directly after its attach row); the program loads with BPF_F_SLEEPABLE.
 }
+
+// GuardedRows may carry a trailing "guarded <g> …" suffix after their
+// RowKinds field count (format 24): ksymvar and kfield.
+var GuardedRows = map[string]bool{"ksymvar": true, "kfield": true}
 
 // RowMaxFields bounds variable-length rows: kfunc has 4..9 fields for 0..5
 // arguments. Other rows require exactly RowKinds.Fields (section 3).
@@ -59,7 +75,7 @@ var RowMaxFields = map[string]int{"kfunc": 9}
 // MaxFormatVersion is the largest header version accepted by Parse; accepted
 // formats are 1..MaxFormatVersion. See specification section 2 for row minima
 // and section 9 for the separate policy history.
-const MaxFormatVersion = 18 // User-probe pointer arguments.
+const MaxFormatVersion = 32 // sleepable fentry companion row; older row minima remain unchanged.
 
 // MaxParsedVersion preserves the previous public name for compatibility.
 const MaxParsedVersion = MaxFormatVersion
@@ -68,7 +84,7 @@ const MaxParsedVersion = MaxFormatVersion
 // Changes to Unmet kinds, BlocksLoad or Unknown handling require a bump and
 // an entry in docs/requirements_format.md section 9. That table records the
 // ABI, typed-attach, loader-declaration and query-policy history.
-const PolicyVersion = 16 // Address-selected DWARF and verified separate debug files.
+const PolicyVersion = 27 // sleepable_type / sleepable_type_unknown.
 
 // ParseError names the rejected one-based line (header 1; end checks 0), row
 // kind (empty for header, unknown kind or document-wide rules) and Rule*.
@@ -91,7 +107,18 @@ const (
 	RuleValue       = "value"
 	RuleUnknownKind = "unknown_kind"
 	RuleDocument    = "document"
+	// the binding of guarded suffixes to guard rows.
+	RuleGuardOrphan  = "guard_orphan"  // A guarded number has no guard row.
+	RuleGuardUnused  = "guard_unused"  // A guard row no guarded suffix lists.
+	RuleGuardTarget  = "guard_target"  // A guard whose target is not the marked row's target.
+	RuleGuardStrong  = "guard_strong"  // A guarded suffix on a strong ksymvar.
+	RuleGuardKind    = "guard_kind"    // A guarded suffix on a row kind other than ksymvar / kfield.
+	RuleGuardOrder   = "guard_order"   // Guard numbering, guard row order or guarded list order.
+	RuleGuardMissing = "guard_missing" // A weak ksymvar without a guarded suffix.
 )
+
+// GuardRules lists the binding rules (specification section 3).
+var GuardRules = []string{RuleGuardOrphan, RuleGuardUnused, RuleGuardTarget, RuleGuardStrong, RuleGuardKind, RuleGuardOrder, RuleGuardMissing}
 
 func perr(line int, row, rule, format string, args ...any) error {
 	return &ParseError{Line: line, Row: row, Rule: rule, msg: fmt.Sprintf(format, args...)}
@@ -100,7 +127,7 @@ func perr(line int, row, rule, format string, args ...any) error {
 // AttachTypes lists families with companion rows (specification section 4),
 // including return probes, typed tracing/ext/struct_ops, multi probes and USDT.
 // Multi targets are counts followed by mtarget; USDT uses <provider>:<name>.
-var AttachTypes = []string{"trace_raw_tp", "trace_fentry", "trace_fexit", "kprobe", "uprobe", "tcx", "kretprobe", "uretprobe", "trace_fmod_ret",
+var AttachTypes = []string{"trace_raw_tp", "trace_fentry", "trace_fexit", "kprobe", "uprobe", "tcx", "netkit", "kretprobe", "uretprobe", "trace_fmod_ret",
 	"trace_lsm", "trace_tp", "trace_perf", "freplace", "trace_struct_ops",
 	"kprobe_multi", "kretprobe_multi", "uprobe_multi", "uretprobe_multi", "usdt",
 	"trace_lsm_cgroup", "ksyscall"} // legacyAttachTypes are accepted only in formats 4..8.
@@ -164,6 +191,8 @@ func isUprobeFamily(t string) bool {
 // trace_fmod_ret at 10, typed companions at 11 and multi/USDT at 12.
 func attachTypeMinVersion(t string) int {
 	switch {
+	case t == "netkit":
+		return NetkitMinVersion
 	case isLegacyAttachType(t):
 		return 4
 	case t == "trace_fmod_ret":
@@ -225,8 +254,11 @@ var UnmetKinds = []UnmetKind{
 	{"program_type", false, true},
 	{"helper", false, true},
 	{"helper_unknown", true, false},
+	{"helper_target", false, true},
+	{"helper_target_unknown", true, true},
 	{"attach", false, true},
 	{"attach_tcx_unknown", true, false},
+	{"attach_netkit_unknown", true, false},
 	{"retsig_unknown", true, true},
 	{"farg", false, true},
 	{"farg_unknown", true, true},
@@ -269,6 +301,8 @@ var UnmetKinds = []UnmetKind{
 	{"attach_target_unknown", true, false},    // Indeterminate; attachment fails loudly.
 	{"ctx_access", false, true},               // Verifier rejects this context field access.
 	{"ctx_access_unknown", true, false},       // Indeterminate; verifier rejects loudly.
+	{"fibflags", false, true},                 // target bpf_fib_lookup rejects the flag mask for the program type.
+	{"fibflags_unknown", true, true},          // indeterminate; a rejected mask is only seen at run time.
 	{"uretprobe_abi", false, true},            // Return-probe target known non-SysV.
 	{"uretprobe_abi_unknown", true, true},     // Return-probe CU language/subprogram evidence missing or not C-family.
 	{"tpfield", false, true},                  // Tracepoint field absent or offset/size/sign differs from tracefs.
@@ -294,6 +328,29 @@ var UnmetKinds = []UnmetKind{
 	{"fsession_loader_unknown", true, true},   // fsession load declaration absent.
 	{"ksyscall_loader", false, true},          // Loader does not attach ksyscall to the architecture-prefixed wrapper.
 	{"ksyscall_loader_unknown", true, true},   // ksyscall attach declaration absent.
+	{"enumval", false, true},                  // Target enum constant absent or its value differs.
+	{"enumval_unknown", true, true},           // Enum values unreadable or enum_values unrecorded.
+	{"coreenum", false, true},                 // target enum constant of a CO-RE enum value relocation absent (the loader poisons the instruction).
+	{"coreenum_unknown", true, true},          // enum values unreadable or enum_values unrecorded.
+	{"funcret", false, true},                  // fexit target absent, or its return is not an integer of the funcret width / sign (void included).
+	{"funcret_unknown", true, true},           // func_ret unrecorded / Unknown — the return type is unconfirmed.
+	{"kstructsize", false, true},              // the target struct is larger than an embedded N, or absent.
+	{"kstructsize_unknown", true, true},       // kstruct_size unrecorded / Unknown — the struct size is unconfirmed.
+	{"datakptr_loader", false, true},          // loader mmaps hidden data variables; the kernel refuses mmap of a kptr map (-ENOTSUPP).
+	{"datakptr_loader_unknown", true, true},   // hidden_data_vars declaration absent.
+	{"arena_loader", false, true},             // the loader rewrites addr_space_cast (corrupt) or does not mmap the arena at map_extra (none).
+	{"arena_loader_unknown", true, true},      // arena_cast / arena_premmap declaration absent.
+	{"typed_ksym_loader", false, true},        // the loader writes a kallsyms address, not BPF_PSEUDO_BTF_ID (per_cpu_ptr rejects it).
+	{"typed_ksym_loader_unknown", true, true}, // typed_ksym declaration absent.
+	{"ksymvar", false, true},                  // VAR absent (strong or unexcused weak), not per-CPU, or another slot type.
+	{"ksymvar_unknown", true, true},           // ksym_vars absent / Unknown, or a guard not confirmed.
+	{"kconfig_loader", false, true},           // weak CONFIG_* under a strong_only loader.
+	{"kconfig_loader_unknown", true, true},    // kconfig declaration absent.
+	{"kconfig", false, true},                  // a strong CONFIG_* not set in the kconfig file.
+	{"kconfig_type", false, true},             // the value does not fit the extern's type (libbpf rejects it).
+	{"kconfig_unknown", true, true},           // kconfig file missing / unreadable / malformed, or no query.
+	{"sleepable_type", false, true},           // the target kernel cannot load this program type / attach type pair sleepable.
+	{"sleepable_type_unknown", true, false},   // no sleepable_types query, or the probe could not separate a type refusal; the kernel refuses loudly.
 }
 
 func knownAttachType(t string) bool {

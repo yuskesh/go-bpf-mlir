@@ -20,6 +20,8 @@ var kfuncProfileRows = []kfuncProfileRow{
 	{"xdp", "xdp", "xdp", "xdp", "", "none", 6, 0, false},
 	{"sched_cls", "tcx/ingress", "sched_cls", "tcx_ingress", "tcx", "ingress", 3, 0, false},
 	{"sched_cls", "tcx/egress", "sched_cls", "tcx_egress", "tcx", "egress", 3, 0, false},
+	{"sched_cls", "netkit/primary", "sched_cls", "netkit_primary", "netkit", "primary", 3, 0, false},
+	{"sched_cls", "netkit/peer", "sched_cls", "netkit_peer", "netkit", "peer", 3, 0, false},
 	{"cgroup_skb", "cgroup_skb/ingress", "cgroup_skb", "cgroup_inet_ingress", "cgroup_inet_ingress", "cgroup", 8, 0, false},
 	{"cgroup_skb", "cgroup_skb/egress", "cgroup_skb", "cgroup_inet_egress", "cgroup_inet_egress", "cgroup", 8, 0, false},
 	{"tp_btf", "tp_btf/", "tracing", "trace_raw_tp", "trace_raw_tp", "tp_btf", 26, 0, true},

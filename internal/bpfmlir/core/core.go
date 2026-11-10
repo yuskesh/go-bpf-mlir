@@ -15,6 +15,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
 	"github.com/cilium/ebpf/btf"
+	"github.com/yuskesh/go-bpf-mlir/internal/bpfmlir/btfexact"
 
 	"github.com/yuskesh/go-bpf-mlir/requirements"
 )
@@ -105,7 +106,7 @@ func localFields(types *btf.Spec, name string) (map[int16]string, error) {
 // TargetFields maps target member names to byte offsets for fixture checks.
 func TargetFields(target *btf.Spec, name string) (map[string]int, error) {
 	var st *btf.Struct
-	if err := target.TypeByName(name, &st); err != nil {
+	if err := btfexact.TypeByName(target, name, &st); err != nil {
 		return nil, err
 	}
 	m := map[string]int{}
@@ -123,7 +124,7 @@ func CheckKFields(kf []requirements.KField, target *btf.Spec) []string {
 	for _, k := range kf {
 		where := fmt.Sprintf("program %s reads %s.%s as %s", k.Program, k.Struct, k.Field, k.Type)
 		var st *btf.Struct
-		if err := target.TypeByName(k.Struct, &st); err != nil {
+		if err := btfexact.TypeByName(target, k.Struct, &st); err != nil {
 			out = append(out, fmt.Sprintf("%s: the target has no struct %s (%v)", where, k.Struct, err))
 			continue
 		}
@@ -174,6 +175,19 @@ func CheckKFields(kf []requirements.KField, target *btf.Spec) []string {
 			}
 			continue
 		}
+		// ptr:void requires a pointer to VOID after unwrapping const,
+		// volatile and typedef (void *, const void *); void ** is not.
+		if k.Type == requirements.KFieldPtrVoid {
+			p, isPtr := btf.UnderlyingType(mb.Type).(*btf.Pointer)
+			if !isPtr {
+				out = append(out, fmt.Sprintf("%s: the target field is %s, not a pointer", where, mb.Type))
+				continue
+			}
+			if _, isVoid := btf.UnderlyingType(p.Target).(*btf.Void); !isVoid {
+				out = append(out, fmt.Sprintf("%s: the target field points to %s, not void", where, p.Target))
+			}
+			continue
+		}
 		// ptr:<T> requires a pointer to STRUCT T.
 		if t, ok := strings.CutPrefix(k.Type, "ptr:"); ok {
 			p, isPtr := btf.UnderlyingType(mb.Type).(*btf.Pointer)
@@ -210,6 +224,20 @@ func CheckKFields(kf []requirements.KField, target *btf.Spec) []string {
 			out = append(out, fmt.Sprintf("%s: the target field is a bitfield (%d bits)", where, mb.BitfieldSize))
 			continue
 		}
+		// enum:<bits> requires a target ENUM (cilium folds ENUM64 into
+		// *btf.Enum of size 8) of bits/8 bytes. The sign is not a contract.
+		// Bitfields were rejected above: a partial field is not a full-width read.
+		if bits := requirements.KFieldEnumBits(k.Type); bits != 0 {
+			en, isEnum := btf.UnderlyingType(mb.Type).(*btf.Enum)
+			if !isEnum {
+				out = append(out, fmt.Sprintf("%s: the target field is %s, not an enum", where, mb.Type))
+				continue
+			}
+			if int(en.Size)*8 != bits {
+				out = append(out, fmt.Sprintf("%s: the target field is a %d-bit enum (%s)", where, en.Size*8, en.Name))
+			}
+			continue
+		}
 		it, ok := btf.UnderlyingType(mb.Type).(*btf.Int)
 		if !ok {
 			out = append(out, fmt.Sprintf("%s: the target field is %s, not an integer", where, mb.Type))
@@ -223,6 +251,28 @@ func CheckKFields(kf []requirements.KField, target *btf.Spec) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// HasField reports whether the dotted member path exists in st, walking it as
+// CheckKFields does (anonymous members breadth-first, intermediate parts
+// through a STRUCT after typedef / qualifiers). The btf_presence field
+// guard asks only presence, not the field's type.
+func HasField(st *btf.Struct, path string) bool {
+	parts := strings.Split(path, ".")
+	for i, part := range parts {
+		mb, _ := findMember(st, part)
+		if mb == nil {
+			return false
+		}
+		if i+1 < len(parts) {
+			next, ok := btf.UnderlyingType(mb.Type).(*btf.Struct)
+			if !ok {
+				return false
+			}
+			st = next
+		}
+	}
+	return true
 }
 
 // findMember searches direct and anonymous struct/union members breadth-first,
@@ -272,7 +322,7 @@ func findMember(st *btf.Struct, name string) (*btf.Member, bool) {
 // declare only the first len(args) arguments. Empty means a match.
 func CheckTracepoint(target *btf.Spec, name string, args []string) []string {
 	var td *btf.Typedef
-	if err := target.TypeByName("btf_trace_"+name, &td); err != nil {
+	if err := btfexact.TypeByName(target, "btf_trace_"+name, &td); err != nil {
 		return []string{fmt.Sprintf("tracepoint %s: the target has no btf_trace_%s (%v)", name, name, err)}
 	}
 	ptr, ok := td.Type.(*btf.Pointer)

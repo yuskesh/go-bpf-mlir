@@ -15,7 +15,7 @@ and a schema JSON, and bpf-mlir's `ebpf-compile` turns them into a BPF ELF with 
 
 - Linux x86_64
 - Go 1.26 or later
-- `ebpf-compile` built from the bpf-mlir v1.20.0 source release (it needs LLVM / MLIR 23.1.1), pointed to by `EBPF_COMPILE`.
+- `ebpf-compile` built from the bpf-mlir v1.21.0 source release (it needs LLVM / MLIR 23.1.1), pointed to by `EBPF_COMPILE`.
   The generated code checks that the `ebpf-compile` version matches the bpf-mlir version this module pairs with ([docs/release.md](docs/release.md))
 
 ## Build and run an example

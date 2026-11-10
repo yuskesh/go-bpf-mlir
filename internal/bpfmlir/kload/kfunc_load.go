@@ -15,6 +15,7 @@ import (
 	"github.com/cilium/ebpf/asm"
 	"github.com/cilium/ebpf/btf"
 	"github.com/yuskesh/go-bpf-mlir/requirements"
+	"github.com/yuskesh/go-bpf-mlir/internal/bpfmlir/btfexact"
 )
 
 type kfuncRecipeProto struct {
@@ -46,7 +47,7 @@ func forwardKfuncLoad(p requirements.KfuncProfile, name, ret string, args []stri
 }
 
 // Construction performs no reader/syscall work; closures execute only in
-	// resolve/load after the guard.
+// resolve/load after the guard.
 func liveKfuncLoadDeps() kfuncLoadDeps {
 	return kfuncLoadDeps{
 		resolve: func(n, r string, a []string) (int32, error) {
@@ -86,7 +87,7 @@ func resolveKfuncLoad(s *btf.Spec, name, ret string, args []string) (int32, erro
 		return 0, fmt.Errorf("kfunc %s BTF unavailable: %w", name, requirements.ErrUnknown)
 	}
 	var fn *btf.Func
-	if err := s.TypeByName(name, &fn); err != nil {
+	if err := btfexact.TypeByName(s, name, &fn); err != nil {
 		return 0, fmt.Errorf("kfunc dependency %s: %v: %w", name, err, requirements.ErrUnknown)
 	}
 	proto, ok := fn.Type.(*btf.FuncProto)
@@ -140,6 +141,12 @@ func kfuncInitialSpec(p requirements.KfuncProfile) (*ebpf.ProgramSpec, error) {
 		case "tcx_egress":
 			at = ebpf.AttachTCXEgress
 			section = "tcx/egress"
+		case "netkit_primary":
+			at = ebpf.AttachNetkitPrimary
+			section = "netkit/primary"
+		case "netkit_peer":
+			at = ebpf.AttachNetkitPeer
+			section = "netkit/peer"
 		default:
 			return unknown()
 		}

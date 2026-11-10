@@ -2,7 +2,7 @@
 
 # Program kinds
 
-Target: bpf-mlir `v1.20.0` (commit d3e13842). The tables follow what the ebpf-compile of this version accepts and rejects.
+Target: bpf-mlir `v1.21.0` (commit 41b18856). The tables follow what the ebpf-compile of this version accepts and rejects.
 
 The context type of the first parameter decides the program kind (the table in `internal/frontend/ctxkind.go`). The verdict is the constant of the program's last `return` (value → bpf-mlir's verdict spelling). The capabilities a non-root loader needs are in the table of [docs/nonroot.md](../nonroot.md) (one row per kind).
 
@@ -24,8 +24,8 @@ The context type of the first parameter decides the program kind (the table in `
 | `*bpf.SocketFilterContext` | socket_filter | — | `bpf.SocketFilterAction` | -1 = keep, 0 = drop | `gobpf.AttachSocketFilter(objs, Prog, fd)` | — |
 | `*bpf.CgroupSKBIngressContext` | cgroup_skb | ingress | `bpf.CgroupAction` | 0 = deny, 1 = allow | `gobpf.AttachCgroup(objs, Prog, cgroupDir) — the attach type follows the kind and the hook` | — |
 | `*bpf.CgroupSKBEgressContext` | cgroup_skb | egress | `bpf.CgroupAction` | 0 = deny, 1 = allow | `gobpf.AttachCgroup(objs, Prog, cgroupDir) — the attach type follows the kind and the hook` | — |
-| `*bpf.CgroupSockContext` | cgroup_sock | — | `bpf.CgroupAction` | 0 = deny, 1 = allow | `gobpf.AttachCgroup(objs, Prog, cgroupDir) — the attach type follows the kind and the hook` | `//gobpf:cgroup_sock <sock_create|sock_release|post_bind4|post_bind6>` |
-| `*bpf.SockAddrContext` | cgroup_sock_addr | — | `bpf.CgroupAction` | 0 = deny, 1 = allow | `gobpf.AttachCgroup(objs, Prog, cgroupDir) — the attach type follows the kind and the hook` | `//gobpf:cgroup_sock_addr <bind4|connect4|sendmsg4|recvmsg4|getpeername4|getsockname4|bind6|connect6|sendmsg6|recvmsg6|getpeername6|getsockname6>` |
+| `*bpf.CgroupSockContext` | cgroup_sock | — | `bpf.CgroupAction` | 0 = deny, 1 = allow | `gobpf.AttachCgroup(objs, Prog, cgroupDir) — the attach type follows the kind and the hook` | `//gobpf:cgroup_sock <sock_create\|sock_release\|post_bind4\|post_bind6>` |
+| `*bpf.SockAddrContext` | cgroup_sock_addr | — | `bpf.CgroupAction` | 0 = deny, 1 = allow | `gobpf.AttachCgroup(objs, Prog, cgroupDir) — the attach type follows the kind and the hook` | `//gobpf:cgroup_sock_addr <bind4\|connect4\|sendmsg4\|recvmsg4\|getpeername4\|getsockname4\|bind6\|connect6\|sendmsg6\|recvmsg6\|getpeername6\|getsockname6>` |
 | `*bpf.SockOpsContext` | sock_ops | — | `bpf.CgroupAction` | 0 = deny, 1 = allow | `gobpf.AttachCgroup(objs, Prog, cgroupDir) — the attach type follows the kind and the hook` | — |
 | `*bpf.CgroupDeviceContext` | cgroup_device | — | `bpf.CgroupAction` | 0 = deny, 1 = allow | `gobpf.AttachCgroup(objs, Prog, cgroupDir) — the attach type follows the kind and the hook` | — |
 | `*bpf.CgroupSetsockoptContext` | cgroup_sockopt | setsockopt | `bpf.CgroupAction` | 0 = deny, 1 = allow | `gobpf.AttachCgroup(objs, Prog, cgroupDir) — the attach type follows the kind and the hook` | — |

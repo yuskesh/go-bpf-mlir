@@ -27,6 +27,7 @@ import (
 	"github.com/cilium/ebpf/asm"
 	"github.com/cilium/ebpf/btf"
 	"github.com/cilium/ebpf/link"
+	"github.com/yuskesh/go-bpf-mlir/internal/bpfmlir/btfexact"
 	"golang.org/x/sys/unix"
 
 	"github.com/yuskesh/go-bpf-mlir/requirements"
@@ -76,7 +77,7 @@ func AttachTypeValue(name string) (value uint64, found bool, err error) {
 		return 0, false, err
 	}
 	var e *btf.Enum
-	if err := spec.TypeByName("bpf_attach_type", &e); err != nil {
+	if err := btfexact.TypeByName(spec, "bpf_attach_type", &e); err != nil {
 		return 0, false, err
 	}
 	want := "BPF_" + strings.ToUpper(name)
@@ -309,7 +310,7 @@ func (LiveCaps) HasAttachType(progType string, progTypeID int64, attachType stri
 			var p *ebpf.Program
 			if NeedsRawLoad(ps) {
 				// cilium lacks lsm_cgroup/fsession attach_btf_id resolution; use the
-		// explicit raw loader in lsmcgroup.go.
+				// explicit raw loader in lsmcgroup.go.
 				p, err = LoadRaw(ps, nil, "")
 			} else {
 				p, err = ebpf.NewProgram(ps)
@@ -363,7 +364,7 @@ func ctxMember(st, field string) (off, size int, found bool, err error) {
 		return 0, 0, false, err
 	}
 	var s *btf.Struct
-	if err := spec.TypeByName(st, &s); err != nil {
+	if err := btfexact.TypeByName(spec, st, &s); err != nil {
 		return 0, 0, false, err
 	}
 	var walk func(ms []btf.Member, base int) (int, int, bool, error)
@@ -468,7 +469,7 @@ func (LiveCaps) HasAttachTarget(attachType, kind, value string) (bool, error) {
 	switch kind {
 	case "iter":
 		var fn *btf.Func
-		if err := spec.TypeByName("bpf_iter_"+value, &fn); err != nil {
+		if err := btfexact.TypeByName(spec, "bpf_iter_"+value, &fn); err != nil {
 			if errors.Is(err, btf.ErrNotFound) {
 				return false, nil
 			}
@@ -477,13 +478,13 @@ func (LiveCaps) HasAttachTarget(attachType, kind, value string) (bool, error) {
 		return true, nil
 	case "rawtp":
 		var td *btf.Typedef
-		if err := spec.TypeByName("btf_trace_"+value, &td); err != nil {
+		if err := btfexact.TypeByName(spec, "btf_trace_"+value, &td); err != nil {
 			return false, unknownf("btf_trace_%s is not in vmlinux BTF (%v) — a module tracepoint is not checked", value, err)
 		}
 		return true, nil
 	case "func":
 		var fn *btf.Func
-		if err := spec.TypeByName(value, &fn); err != nil {
+		if err := btfexact.TypeByName(spec, value, &fn); err != nil {
 			return false, unknownf("FUNC %s is not in vmlinux BTF (%v) — a module function is not checked", value, err)
 		}
 		return true, nil
@@ -504,7 +505,7 @@ func (LiveCaps) HasAttachTarget(attachType, kind, value string) (bool, error) {
 		return false, unknownf("tracefs event %s is not readable (%s) — a module tracepoint or no tracefs is not checked", value, strings.Join(errs, "; "))
 	case "lsm": // LSM hooks use built-in bpf_lsm_<hook> FUNC; absence means false.
 		var fn *btf.Func
-		if err := spec.TypeByName("bpf_lsm_"+value, &fn); err != nil {
+		if err := btfexact.TypeByName(spec, "bpf_lsm_"+value, &fn); err != nil {
 			if errors.Is(err, btf.ErrNotFound) {
 				return false, nil
 			}

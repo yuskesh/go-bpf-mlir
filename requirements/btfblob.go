@@ -10,7 +10,7 @@ import (
 // Loaders own probing, e.g. cilium NewHandleFromRawBTF without its marshal
 // rewrites; this package only constructs bytes with the standard library.
 // Supported features are int, ptr, const, array, struct, func, func_proto,
-// func_global, var, datasec, decl_tag and type_tag; others return an error.
+// func_global, var, datasec, decl_tag, type_tag, enum and enum64; others return an error.
 // The decl_tag probe checks kind acceptance, not arg:nonnull semantics: its tag
 // is not arg:-prefixed. Successful BTF loading does not prove tag interpretation.
 func BTFFeatureBlob(f string) ([]byte, error) {
@@ -41,6 +41,10 @@ func BTFFeatureBlob(f string) ([]byte, error) {
 		// btf_find_kptr requires PTR -> TYPE_TAG with tag 'kptr'.
 		tag := b.typ(b.str("ebpf_probe"), kindInfo(18, 0, false), intID)
 		b.typ(0, kindInfo(2, 0, false), tag)
+	case "enum": // a 4-byte ENUM with one enumerator (kernel_types enum fields).
+		b.typ(b.str("e"), kindInfo(6, 1, false), 4, u32(b.str("E")), u32(0))
+	case "enum64": // an 8-byte ENUM64 with one enumerator (name, lo32, hi32). A 64-bit kernel_types enum field is a raw ENUM of size 8 in the ELF, which cilium marshals as ENUM64 — so the kernel must accept ENUM64.
+		b.typ(b.str("e"), kindInfo(19, 1, false), 8, u32(b.str("E")), u32(0), u32(0))
 	case "var", "datasec":
 		v := b.typ(b.str("v"), kindInfo(14, 0, false), intID, u32(1)) // global allocated
 		if f == "datasec" {

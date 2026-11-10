@@ -146,6 +146,9 @@ var ctxAccessRows = []ctxAccessRow{
 	{"sock_ops", "cgroup_sock_ops", "reply", "w"},
 	{"sk_skb", "sk_skb_stream_verdict", "len", "r"}, // sk_skb
 	{"sk_skb", "sk_skb_stream_verdict", "local_port", "r"},
+	{"sk_skb", "sk_skb_verdict", "len", "r"}, // the verdict attach (not used by a gobpf directive; mirrors bpf-mlir)
+	{"sk_skb", "sk_skb_verdict", "local_port", "r"},
+	{"sk_skb", "sk_skb_verdict", "remote_port", "r"},
 	{"sk_msg", "sk_msg_verdict", "family", "r"}, // sk_msg
 	{"sk_msg", "sk_msg_verdict", "local_ip4", "r"},
 	{"sk_msg", "sk_msg_verdict", "local_port", "r"},

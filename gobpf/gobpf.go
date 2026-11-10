@@ -129,6 +129,9 @@ var ErrNoObject = errors.New("gobpf: no embedded eBPF object in this binary (run
 // ErrAlreadyLoaded means Load was called twice (before Close).
 var ErrAlreadyLoaded = errors.New("gobpf: the embedded object is already loaded (call Objects.Close before loading again)")
 
+// ErrArenaRequiresOwnedLoader refuses an ordinary load without arena mapping ownership.
+var ErrArenaRequiresOwnedLoader = errors.New("gobpf: arena maps require the owned arena loader")
+
 // TargetError is a requirement mismatch that stops the load (BlocksLoad of requirements.Unmet). No kernel object was created.
 // An alias of bpf-mlir's go/bindrt type (bindrt holds the contract decisions in one place; its golden pins the messages and fields).
 type TargetError = bindrt.TargetError
@@ -225,6 +228,11 @@ func LoadCollectionSpec() (*ebpf.CollectionSpec, error) {
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(o.ELF))
 	if err != nil {
 		return nil, err
+	}
+	for _, m := range spec.Maps {
+		if m.Type == ebpf.Arena {
+			return nil, ErrArenaRequiresOwnedLoader
+		}
 	}
 	if err := checkCPUMaps(spec); err != nil {
 		return nil, err

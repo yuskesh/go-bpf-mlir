@@ -22,10 +22,14 @@ const V13MinVersion = KfuncAndSyscallMinVersion
 // isSyscallOrLSMCgroupAttachType identifies the typed families introduced in format 13.
 func isSyscallOrLSMCgroupAttachType(t string) bool { return t == "trace_lsm_cgroup" || t == "ksyscall" }
 
-// btfFeatureMinVersion is 13 for type_tag, otherwise the BTF row minimum 5.
+// btfFeatureMinVersion is 13 for type_tag, 22 for enum, otherwise the
+// BTF row minimum 5.
 func btfFeatureMinVersion(f string) int {
 	if f == "type_tag" {
 		return KfuncAndSyscallMinVersion
+	}
+	if f == "enum" || f == "enum64" { // enum64: a 64-bit enum field's local type, a size-8 ENUM that readers treat as ENUM64
+		return EnumKFieldMinVersion
 	}
 	return minVersion("btf")
 }

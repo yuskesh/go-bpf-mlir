@@ -2,7 +2,7 @@
 
 # Reason codes (GB000 onward)
 
-Target: bpf-mlir `v1.20.0` (commit d3e13842). The tables follow what the ebpf-compile of this version accepts and rejects.
+Target: bpf-mlir `v1.21.0` (commit 41b18856). The tables follow what the ebpf-compile of this version accepts and rejects.
 
 The codes of the frontend's diagnostics (`internal/frontend/result.go`). **Verdict**: Rejected (refused by a known rule) and Unknown (not in the table — fail closed) stop generation. Conditional (GB020, GB024) does not stop generation; it stays in the go generate output and in the conditional section of the generated file. "Examples that stop" are the location and message in the negative-test testdata (`internal/frontend/testdata/<dir>`) — `TestNegative` checks that each stops as this table says.
 

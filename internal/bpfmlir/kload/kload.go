@@ -16,6 +16,7 @@ import (
 	"github.com/cilium/ebpf/asm"
 	"github.com/cilium/ebpf/btf"
 	"github.com/cilium/ebpf/features"
+	"github.com/yuskesh/go-bpf-mlir/internal/bpfmlir/btfexact"
 	"golang.org/x/sys/unix"
 
 	"github.com/yuskesh/go-bpf-mlir/requirements"
@@ -87,14 +88,18 @@ func (LiveCaps) CheckFunc(name string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("target BTF: %w", err)
 	}
+	return checkFuncIn(spec, name), nil
+}
+
+func checkFuncIn(spec *btf.Spec, name string) []string {
 	var fn *btf.Func
-	if err := spec.TypeByName(name, &fn); err != nil {
+	if err := btfexact.TypeByName(spec, name, &fn); err != nil {
 		if errors.Is(err, btf.ErrNotFound) {
-			return []string{fmt.Sprintf("kernel function %s is not in the target BTF (fentry needs a BTF FUNC to attach to)", name)}, nil
+			return []string{fmt.Sprintf("kernel function %s is not in the target BTF (fentry needs a BTF FUNC to attach to)", name)}
 		}
-		return []string{fmt.Sprintf("kernel function %s: %v", name, err)}, nil
+		return []string{fmt.Sprintf("kernel function %s: %v", name, err)}
 	}
-	return nil, nil
+	return nil
 }
 
 // CheckKernelFuncSig checks the FUNC_PROTO argument count and the return integer's
@@ -104,16 +109,20 @@ func (LiveCaps) CheckFuncSig(name string, nargs int, ret string) ([]string, erro
 	if err != nil {
 		return nil, fmt.Errorf("target BTF: %w", err)
 	}
+	return checkFuncSigIn(spec, name, nargs, ret), nil
+}
+
+func checkFuncSigIn(spec *btf.Spec, name string, nargs int, ret string) []string {
 	var fn *btf.Func
-	if err := spec.TypeByName(name, &fn); err != nil {
+	if err := btfexact.TypeByName(spec, name, &fn); err != nil {
 		if errors.Is(err, btf.ErrNotFound) {
-			return []string{fmt.Sprintf("kernel function %s is not in the target BTF (fexit needs a BTF FUNC to attach to)", name)}, nil
+			return []string{fmt.Sprintf("kernel function %s is not in the target BTF (fexit needs a BTF FUNC to attach to)", name)}
 		}
-		return []string{fmt.Sprintf("kernel function %s: %v", name, err)}, nil
+		return []string{fmt.Sprintf("kernel function %s: %v", name, err)}
 	}
 	proto, ok := fn.Type.(*btf.FuncProto)
 	if !ok {
-		return []string{fmt.Sprintf("kernel function %s has no FUNC_PROTO", name)}, nil
+		return []string{fmt.Sprintf("kernel function %s has no FUNC_PROTO", name)}
 	}
 	var diffs []string
 	if len(proto.Params) != nargs {
@@ -132,7 +141,57 @@ func (LiveCaps) CheckFuncSig(name string, nargs int, ret string) ([]string, erro
 			diffs = append(diffs, fmt.Sprintf("kernel function %s returns %s in the target BTF, but the object reads %s", name, got, want))
 		}
 	}
-	return diffs, nil
+	return diffs
+}
+
+// CheckFuncRet checks only the FUNC_PROTO return integer's width and signedness
+// after removing typedefs and qualifiers (funcret: the program reads the
+// return value through bpf_get_func_ret, so the argument count is not baked in).
+// An absent / unreadable vmlinux BTF is Unknown (funcret_unknown, blocking);
+// any other BTF error is a checking error (enumValueSpec's rule).
+func (LiveCaps) CheckFuncRet(name, ret string) ([]string, error) {
+	spec, err := vmlinux()
+	return checkFuncRetSpec(spec, err, name, ret)
+}
+
+func checkFuncRetSpec(spec *btf.Spec, err error, name, ret string) ([]string, error) {
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) || errors.Is(err, ebpf.ErrNotSupported) {
+			return nil, fmt.Errorf("function %s: target BTF unavailable: %w: %w", name, err, requirements.ErrUnknown)
+		}
+		return nil, fmt.Errorf("target BTF: %w", err)
+	}
+	return checkFuncRetIn(spec, name, ret), nil
+}
+
+func checkFuncRetIn(spec *btf.Spec, name, ret string) []string {
+	var fn *btf.Func
+	if err := btfexact.TypeByName(spec, name, &fn); err != nil {
+		if errors.Is(err, btf.ErrNotFound) {
+			return []string{fmt.Sprintf("kernel function %s is not in the target BTF (fexit needs a BTF FUNC to attach to)", name)}
+		}
+		return []string{fmt.Sprintf("kernel function %s: %v", name, err)}
+	}
+	proto, ok := fn.Type.(*btf.FuncProto)
+	if !ok {
+		return []string{fmt.Sprintf("kernel function %s has no FUNC_PROTO", name)}
+	}
+	u := btf.UnderlyingType(proto.Return)
+	if _, void := u.(*btf.Void); void || proto.Return == nil {
+		return []string{fmt.Sprintf("kernel function %s returns void in the target BTF (the object reads %s)", name, ret)}
+	}
+	it, ok := u.(*btf.Int)
+	if !ok {
+		return []string{fmt.Sprintf("kernel function %s does not return an integer in the target BTF (the object reads %s)", name, ret)}
+	}
+	got := fmt.Sprintf("u%d", it.Size*8)
+	if it.Encoding&btf.Signed != 0 {
+		got = fmt.Sprintf("i%d", it.Size*8)
+	}
+	if got != ret {
+		return []string{fmt.Sprintf("kernel function %s returns %s in the target BTF, but the object reads %s", name, got, ret)}
+	}
+	return nil
 }
 
 func (LiveCaps) CheckKFields(kf []requirements.KField) ([]string, error) {
@@ -217,7 +276,7 @@ func (LiveCaps) CheckStructField(st, field string, offset, size int) ([]string, 
 		return nil, fmt.Errorf("target BTF: %v: %w", err, requirements.ErrUnknown)
 	}
 	var s *btf.Struct
-	if err := spec.TypeByName(st, &s); err != nil {
+	if err := btfexact.TypeByName(spec, st, &s); err != nil {
 		if errors.Is(err, btf.ErrNotFound) {
 			return []string{fmt.Sprintf("struct %s is not in the target BTF", st)}, nil
 		}
@@ -268,7 +327,7 @@ func (LiveCaps) CheckFuncParam(name string, n int, typ string) ([]string, error)
 		return nil, fmt.Errorf("target BTF: %v: %w", err, requirements.ErrUnknown)
 	}
 	var fn *btf.Func
-	if err := spec.TypeByName(name, &fn); err != nil {
+	if err := btfexact.TypeByName(spec, name, &fn); err != nil {
 		return nil, fmt.Errorf("kernel function %s has no FUNC in the target BTF (%v): %w", name, err, requirements.ErrUnknown)
 	}
 	proto, ok := fn.Type.(*btf.FuncProto)
@@ -295,7 +354,7 @@ func (LiveCaps) CheckFuncArgs(name string, args []string) ([]string, error) {
 		return nil, fmt.Errorf("target BTF: %v: %w", err, requirements.ErrUnknown)
 	}
 	var fn *btf.Func
-	if err := spec.TypeByName(name, &fn); err != nil {
+	if err := btfexact.TypeByName(spec, name, &fn); err != nil {
 		return nil, fmt.Errorf("kernel function %s has no FUNC in the target BTF (%v): %w", name, err, requirements.ErrUnknown)
 	}
 	proto, ok := fn.Type.(*btf.FuncProto)

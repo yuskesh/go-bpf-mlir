@@ -8,19 +8,19 @@ This document starts from a new Go module outside this repository and goes throu
 
 ## 0. Get go-bpf-mlir
 
-Requirements: Linux x86_64, Go 1.26 or later, and an `ebpf-compile` built from the bpf-mlir v1.20.0 source release (LLVM / MLIR 23.1.1 — follow the build instructions of that release).
+Requirements: Linux x86_64, Go 1.26 or later, and an `ebpf-compile` built from the bpf-mlir v1.21.0 source release (LLVM / MLIR 23.1.1 — follow the build instructions of that release).
 `go generate` uses the `ebpf-compile` named by `EBPF_COMPILE` and checks its version against the bpf-mlir version that this go-bpf-mlir version pairs with ([release.md](release.md)).
 
 ```sh manual
-export EBPF_COMPILE=/path/to/bpf-mlir/build/bin/ebpf-compile   # built from the bpf-mlir v1.20.0 source release
+export EBPF_COMPILE=/path/to/bpf-mlir/build/bin/ebpf-compile   # built from the bpf-mlir v1.21.0 source release
 ```
 
 Create your own module and make the generator `gobpf` a tool of the module:
 
 ```sh manual
 go mod init example.com/myprog
-go get github.com/yuskesh/go-bpf-mlir@v0.18.0
-go get -tool github.com/yuskesh/go-bpf-mlir/cmd/gobpf@v0.18.0
+go get github.com/yuskesh/go-bpf-mlir@v0.19.0
+go get -tool github.com/yuskesh/go-bpf-mlir/cmd/gobpf@v0.19.0
 ```
 
 (These two blocks are not run by the check — the check runs the rest of this document against the go-bpf-mlir source tree it verifies.)

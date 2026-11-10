@@ -17,6 +17,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/btf"
+	"github.com/yuskesh/go-bpf-mlir/internal/bpfmlir/btfexact"
 
 	"github.com/yuskesh/go-bpf-mlir/requirements"
 )
@@ -291,6 +292,14 @@ func compareProto(what string, proto *btf.FuncProto, nargs int, ret string, args
 			continue
 		}
 		p := proto.Params[i]
+		// enum:<bits> matches a BTF ENUM / ENUM64 of that size; the sign
+		// (ENUM kflag) is not part of the contract and is not compared.
+		if bits, ok := strings.CutPrefix(want, requirements.EnumArgPrefix); ok {
+			if got := describeParam(p.Type); got != "enum"+bits {
+				out = append(out, fmt.Sprintf("argument %d (%s) of %s is %s in the target BTF, but the object reads it as %s", i, requirements.ArgName(p.Name), what, got, want))
+			}
+			continue
+		}
 		if isIntSpelling(want) {
 			if got := describeParam(p.Type); got != want {
 				out = append(out, fmt.Sprintf("argument %d (%s) of %s is %s in the target BTF, but the object reads it as %s", i, requirements.ArgName(p.Name), what, got, want))
@@ -316,12 +325,18 @@ func (LiveCaps) CheckStructOpsMember(strct, member string, nargs int, ret string
 	if err != nil {
 		return nil, unknownf("reading the target BTF failed (%v)", err)
 	}
+	return CheckStructOpsMemberSpec(spec, strct, member, nargs, ret, args)
+}
+
+// CheckStructOpsMemberSpec is CheckStructOpsMember against a given kernel BTF,
+// such as a vmlinux file of another kernel read offline.
+func CheckStructOpsMemberSpec(spec *btf.Spec, strct, member string, nargs int, ret string, args []string) ([]string, error) {
 	var value *btf.Struct
-	if err := spec.TypeByName("bpf_struct_ops_"+strct, &value); err != nil {
+	if err := btfexact.TypeByName(spec, "bpf_struct_ops_"+strct, &value); err != nil {
 		return nil, unknownf("bpf_struct_ops_%s is not in vmlinux BTF (%v) — a module struct_ops is not checked", strct, err)
 	}
 	var st *btf.Struct
-	if err := spec.TypeByName(strct, &st); err != nil {
+	if err := btfexact.TypeByName(spec, strct, &st); err != nil {
 		return nil, unknownf("struct %s is not in vmlinux BTF (%v)", strct, err)
 	}
 	for _, m := range st.Members {
@@ -379,7 +394,7 @@ func CheckExtTargetBTF(spec *btf.Spec, fn string, nargs int, ret string, args []
 		return nil, fmt.Errorf("no BTF for the replacement target: %w", requirements.ErrUnknown)
 	}
 	var f *btf.Func
-	if err := spec.TypeByName(fn, &f); err != nil {
+	if err := btfexact.TypeByName(spec, fn, &f); err != nil {
 		if errors.Is(err, btf.ErrNotFound) {
 			return nil, fmt.Errorf("function %s is not in the replacement target's BTF: %w", fn, requirements.ErrUnknown)
 		}

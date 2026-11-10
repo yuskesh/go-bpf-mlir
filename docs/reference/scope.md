@@ -2,7 +2,7 @@
 
 # Supported scope
 
-Target: bpf-mlir `v1.20.0` (commit d3e13842). The tables follow what the ebpf-compile of this version accepts and rejects.
+Target: bpf-mlir `v1.21.0` (commit 41b18856). The tables follow what the ebpf-compile of this version accepts and rejects.
 
 Evidence and status per feature group. **Status**: **supported** = frontend negative examples + a differential or selftest run on 3 kernels (7.1.8 / 6.12.111 / 6.6.157) + a row in the non-root capability matrix; if any of these is missing, **limited** (naming what is missing). Negative examples and example packages are generated from the frontend's analysis; status and limits are maintained by hand, and tests check the evidence behind each status and that the status agrees with the generated columns. The limits and notes of each group are in one place in [notes.md](notes.md).
 
@@ -90,7 +90,7 @@ Evidence and status per feature group. **Status**: **supported** = frontend nega
 | G25 | variable indexes into record arrays (ref.index) | 1 | — | supported | notes.md: "Conditional diagnostics" |
 | G26 | integer arithmetic (widths, signs, shifts, division expansion) | 1 | `flowsample` `tailparse` `tccount` `tcpopts` `xdpwindow` | supported | notes.md: "Differences from Go semantics" |
 | G27 | conditional verdicts (an if return at the end of the body — verdict.if) | 2 | `ipdeny` | supported | — |
-| G28 | && / || short-circuit (expressions with a call on the right) | 1 | — | supported | — |
+| G28 | && / \|\| short-circuit (expressions with a call on the right) | 1 | — | supported | — |
 | G29 | CO-RE kernel structs (tp_btf and fentry arguments, 8- to 64-bit fields, char[N] copies, following pointers and nil checks) | 51 | `forkwatch` | limited — on 6.6 the target check's arg_nullable prevents loading tp_btf programs that read struct (pointer) arguments (including arguments that can be NULL in the checked form — an expected refusal: evidence that it stops, not evidence of use). tp_btf programs with integer arguments only load on 6.6 too, since bpf-mlir v1.1.0 | notes.md: "tp_btf and CO-RE" |
 | G30 | nested records (struct fields, one-dimensional arrays of records, two-dimensional integer arrays) | 13 | `flowsample` | supported | notes.md: "Nested records" |
 
@@ -214,7 +214,7 @@ The paths not measured and the notes that affect users, within the "supported" g
 | G22 | `Timer.Init`, `Timer.SetCallback`, `Timer.Start` | — |
 | G23 | — | `ebpf.loop ` |
 | G24 | — | `ebpf.func ` |
-| G31 | — | `re:ebpf\.func @\w+ "\w+" \([^)]*!ebpf\.(borrowed|maybe_ref)<`, `re:ebpf\.func @\w+ "global"` |
+| G31 | — | `re:ebpf\.func @\w+ "\w+" \([^)]*!ebpf\.(borrowed\|maybe_ref)<`, `re:ebpf\.func @\w+ "global"` |
 | G32 | — | `re:ebpf\.func @\w+ "static" \([^)]*!ebpf\.pkt_window<\d+>`, `re:ebpf\.call @\w+\([^)]*\) : \([^)]*!ebpf\.pkt_window<` |
 | G33 | — | `re:\^present\(%\w+: !ebpf\.borrowed<[^\n]*\n(?:[^\n]*\n){0,2}?\s*ebpf\.ref\.check ` |
 | G35 | `TracepointContext`, `TracepointContext.Event`, `RawTPContext`, `RawTPArg`, `KretprobeContext`, `KretprobeContext.Ret`, `UretprobeContext`, `UretprobeContext.Ret` | — |

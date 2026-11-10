@@ -21,6 +21,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
 	"github.com/cilium/ebpf/btf"
+	"github.com/yuskesh/go-bpf-mlir/internal/bpfmlir/btfexact"
 	"golang.org/x/sys/unix"
 )
 
@@ -102,7 +103,7 @@ func loadRaw(spec *ebpf.ProgramSpec, maps map[string]*ebpf.Map, elfPath string, 
 	}
 	funcID := func(name string) (btf.TypeID, error) {
 		var fn *btf.Func
-		if err := kspec.TypeByName(name, &fn); err != nil {
+		if err := btfexact.TypeByName(kspec, name, &fn); err != nil {
 			return 0, err
 		}
 		return kspec.TypeID(fn)
@@ -197,8 +198,8 @@ func loadRaw(spec *ebpf.ProgramSpec, maps map[string]*ebpf.Map, elfPath string, 
 		}
 		copy(attr[48:64], name)
 		le.PutUint32(attr[68:], uint32(spec.AttachType)) // expected_attach_type
-		if progBTF != nil { // Attribute offsets: prog_btf_fd@72, func_info_rec_size@76, func_info@80,
-	// func_info_cnt@88, line_info_rec_size@92, line_info@96, line_info_cnt@104.
+		if progBTF != nil {                              // Attribute offsets: prog_btf_fd@72, func_info_rec_size@76, func_info@80,
+			// func_info_cnt@88, line_info_rec_size@92, line_info@96, line_info_cnt@104.
 			le.PutUint32(attr[72:], uint32(progBTF.FD()))
 			if len(fib) > 0 {
 				le.PutUint32(attr[76:], btf.FuncInfoSize)

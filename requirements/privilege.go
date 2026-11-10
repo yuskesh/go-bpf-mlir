@@ -14,9 +14,11 @@ import (
 // a recorded root answer must not authorize a non-root load. See
 // docs/requirements_format.md section 10 for the query privilege table.
 var PrivilegeDependentQueries = []string{
-	QueryProgType, QueryHelper, QueryMapType, QueryTCX, QueryBTFFeature, QueryArgTag, QueryMapField, QueryNullableArgs,
-	QueryTracingHelper, QueryAttachType, QueryCtxAccess,
-	QueryKfuncLoad, // Exact-profile program-load acceptance depends on effective capabilities.
+	QueryProgType, QueryHelper, QueryMapType, QueryTCX, QueryNetkit, QueryBTFFeature, QueryArgTag, QueryMapField, QueryNullableArgs,
+	QueryTracingHelper, QueryAttachType, QueryCtxAccess, QuerySleepable, // the pair probe loads a program.
+	QueryHelperTarget,
+	QueryFibLookupFlags, // the probe loads an XDP program.
+	QueryKfuncLoad,      // Exact-profile program-load acceptance depends on effective capabilities.
 }
 
 // PrivilegeDependent reports whether query q depends on probe privileges.
@@ -118,6 +120,12 @@ func reprobeHas(r Capabilities, q string) bool {
 		ok = true
 	case QueryTCX:
 		_, ok = r.(TCXCaps)
+	case QuerySleepable:
+		_, ok = r.(SleepableCaps)
+	case QueryNetkit:
+		_, ok = r.(NetkitCaps)
+	case QueryHelperTarget:
+		_, ok = r.(TargetHelperCaps)
 	case QueryBTFFeature:
 		_, ok = r.(BTFFeatureCaps)
 	case QueryArgTag:

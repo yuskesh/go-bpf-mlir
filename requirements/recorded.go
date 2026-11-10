@@ -19,7 +19,37 @@ import (
 // query is an error, never implicit true.
 
 // RecordedFormat identifies caps.json's format.
-const RecordedFormat = "ebpf-caps 10" // separate DWARF query. Older query meanings remain unchanged.
+const RecordedFormat = "ebpf-caps 20" // the sleepable_types query (program type x attach type pair loadable with BPF_F_SLEEPABLE).
+
+// Format 19 introduced the helper_target query; keep its minimum unchanged.
+const recordedFormatHelperTarget = "ebpf-caps 19"
+
+const recordedFormatNetkit = "ebpf-caps 18" // direction-specific netkit link queries.
+
+// Format 17 introduced arena loader declarations; keep their minimum unchanged.
+const recordedFormatArena = "ebpf-caps 17"
+
+// The kstruct_size query came one format before the arena loader keys.
+const recordedFormatKStructSize = "ebpf-caps 16"
+
+// The func_ret query came one format before kstruct_size.
+const recordedFormatFuncRet = "ebpf-caps 15"
+
+// The ksym_vars / kconfig / btf_presence queries and the typed_ksym / kconfig
+// loader keys came one format before func_ret.
+const recordedFormatExternDecls = "ebpf-caps 14"
+
+// The loader key hidden_data_vars came one format before the guard additions.
+const recordedFormatHiddenDataVars = "ebpf-caps 13"
+
+// The fib_lookup_flags query came one format before hidden_data_vars.
+const recordedFormatFibFlags = "ebpf-caps 12"
+
+// The enum_values query came one format before fib_lookup_flags (named by the query, not the number).
+const recordedFormatEnumValues = "ebpf-caps 11"
+
+// Format 10 added the separate DWARF query.
+const recordedFormatV10 = "ebpf-caps 10"
 
 const recordedFormatV9 = "ebpf-caps 9"
 
@@ -83,6 +113,29 @@ type LoaderJSON struct {
 	LSMCgroupLoad  string `json:"lsm_cgroup_load,omitempty"`
 	FsessionLoad   string `json:"fsession_load,omitempty"`
 	KsyscallAttach string `json:"ksyscall_attach,omitempty"`
+	// Since format 13: hidden_data_vars no_mmap / mmap; omitted
+	// produces blocking datakptr_loader_unknown.
+	HiddenDataVars string `json:"hidden_data_vars,omitempty"`
+	// Since format 14: typed_ksym btf_id / kallsyms_addr and kconfig
+	// weak_zero / strong_only; omitted produces blocking
+	// typed_ksym_loader_unknown / kconfig_loader_unknown.
+	TypedKsym string `json:"typed_ksym,omitempty"`
+	Kconfig   string `json:"kconfig,omitempty"`
+	// Since format 17: arena_cast preserve / corrupt and arena_premmap
+	// create_then_mmap / none; omitted produces blocking arena_loader_unknown
+	// (unless the other key is a definite corrupt / none — arena_loader).
+	ArenaCast    string `json:"arena_cast,omitempty"`
+	ArenaPremmap string `json:"arena_premmap,omitempty"`
+}
+
+// arenaDeclKeys are the format-17 declaration keys.
+func (l *LoaderJSON) arenaDeclKeys() [][2]string {
+	return [][2]string{{"arena_cast", l.ArenaCast}, {"arena_premmap", l.ArenaPremmap}}
+}
+
+// externDeclKeys are the format-14 declaration keys.
+func (l *LoaderJSON) externDeclKeys() [][2]string {
+	return [][2]string{{"typed_ksym", l.TypedKsym}, {"kconfig", l.Kconfig}}
 }
 
 // typedFamilyDeclKeys follows specification section 13 declaration-key order.
@@ -100,6 +153,19 @@ func (l *LoaderJSON) Validate() error {
 			return fmt.Errorf("loader %q: %s %q is not a known value (or no key — not declared)", l.Name, kv[0], kv[1])
 		}
 	}
+	if !validDeclValue("hidden_data_vars", l.HiddenDataVars) {
+		return fmt.Errorf("loader %q: hidden_data_vars %q is not a known value (or no key — not declared)", l.Name, l.HiddenDataVars)
+	}
+	for _, kv := range l.externDeclKeys() {
+		if !validDeclValue(kv[0], kv[1]) {
+			return fmt.Errorf("loader %q: %s %q is not a known value (or no key — not declared)", l.Name, kv[0], kv[1])
+		}
+	}
+	for _, kv := range l.arenaDeclKeys() {
+		if !validDeclValue(kv[0], kv[1]) {
+			return fmt.Errorf("loader %q: %s %q is not a known value (or no key — not declared)", l.Name, kv[0], kv[1])
+		}
+	}
 	return nil
 }
 
@@ -107,20 +173,31 @@ func (l *LoaderJSON) Validate() error {
 func (l *LoaderJSON) Decl() LoaderDecl {
 	return LoaderDecl{Name: l.Name, KprobeAliasPrefix: l.KprobeAliasPrefix, UprobeReopensPath: l.UprobeReopensPath,
 		COREPoisonsMissingField: l.COREPoisonsMissingField, BTFRewrite: l.BTFRewrite, USDTAttach: l.USDTAttach,
-		SockmapAttach: l.SockmapAttach, LSMCgroupLoad: l.LSMCgroupLoad, FsessionLoad: l.FsessionLoad, KsyscallAttach: l.KsyscallAttach}
+		SockmapAttach: l.SockmapAttach, LSMCgroupLoad: l.LSMCgroupLoad, FsessionLoad: l.FsessionLoad, KsyscallAttach: l.KsyscallAttach,
+		HiddenDataVars: l.HiddenDataVars, TypedKsym: l.TypedKsym, Kconfig: l.Kconfig, ArenaCast: l.ArenaCast, ArenaPremmap: l.ArenaPremmap}
 }
 
 // LoaderJSONOf converts a declaration to its JSON form.
 func LoaderJSONOf(d LoaderDecl) *LoaderJSON {
 	return &LoaderJSON{Name: d.Name, KprobeAliasPrefix: d.KprobeAliasPrefix, UprobeReopensPath: d.UprobeReopensPath,
 		COREPoisonsMissingField: d.COREPoisonsMissingField, BTFRewrite: d.BTFRewrite, USDTAttach: d.USDTAttach,
-		SockmapAttach: d.SockmapAttach, LSMCgroupLoad: d.LSMCgroupLoad, FsessionLoad: d.FsessionLoad, KsyscallAttach: d.KsyscallAttach}
+		SockmapAttach: d.SockmapAttach, LSMCgroupLoad: d.LSMCgroupLoad, FsessionLoad: d.FsessionLoad, KsyscallAttach: d.KsyscallAttach,
+		HiddenDataVars: d.HiddenDataVars, TypedKsym: d.TypedKsym, Kconfig: d.Kconfig, ArenaCast: d.ArenaCast, ArenaPremmap: d.ArenaPremmap}
 }
 
 // ForFormat retains only declaration keys that format can carry: <=7 lacks
 // the four newer keys, and <=6 also lacks usdt_attach.
 func (l LoaderJSON) ForFormat(format string) LoaderJSON {
-	if format != RecordedFormat && format != recordedFormatV9 && format != recordedFormatV8 {
+	if format != RecordedFormat && format != recordedFormatHelperTarget && format != recordedFormatNetkit && format != recordedFormatArena { // arena_cast / arena_premmap are new in format 17.
+		l.ArenaCast, l.ArenaPremmap = "", ""
+	}
+	if format != RecordedFormat && format != recordedFormatHelperTarget && format != recordedFormatNetkit && format != recordedFormatArena && format != recordedFormatKStructSize && format != recordedFormatFuncRet && format != recordedFormatExternDecls { // typed_ksym / kconfig are new in format 14.
+		l.TypedKsym, l.Kconfig = "", ""
+	}
+	if format != RecordedFormat && format != recordedFormatHelperTarget && format != recordedFormatNetkit && format != recordedFormatArena && format != recordedFormatKStructSize && format != recordedFormatFuncRet && format != recordedFormatExternDecls && format != recordedFormatHiddenDataVars { // hidden_data_vars is new in format 13.
+		l.HiddenDataVars = ""
+	}
+	if format != RecordedFormat && format != recordedFormatHelperTarget && format != recordedFormatNetkit && format != recordedFormatArena && format != recordedFormatKStructSize && format != recordedFormatFuncRet && format != recordedFormatExternDecls && format != recordedFormatHiddenDataVars && format != recordedFormatFibFlags && format != recordedFormatEnumValues && format != recordedFormatV10 && format != recordedFormatV9 && format != recordedFormatV8 {
 		l.SockmapAttach, l.LSMCgroupLoad, l.FsessionLoad, l.KsyscallAttach = "", "", "", ""
 		if format != recordedFormatV7 {
 			l.USDTAttach = ""
@@ -153,7 +230,7 @@ type recordedJSON struct {
 
 // splitsPrivileged identifies formats with a separate privileged_queries map.
 func splitsPrivileged(format string) bool {
-	return format == RecordedFormat || format == recordedFormatV9 || format == recordedFormatV8 || format == recordedFormatV7 || format == recordedFormatV6
+	return format == RecordedFormat || format == recordedFormatHelperTarget || format == recordedFormatNetkit || format == recordedFormatArena || format == recordedFormatKStructSize || format == recordedFormatFuncRet || format == recordedFormatExternDecls || format == recordedFormatHiddenDataVars || format == recordedFormatFibFlags || format == recordedFormatEnumValues || format == recordedFormatV10 || format == recordedFormatV9 || format == recordedFormatV8 || format == recordedFormatV7 || format == recordedFormatV6
 }
 
 // MarshalJSON splits privilege-dependent answers for split-capable formats;
@@ -195,13 +272,19 @@ func ReadRecordedCaps(path string) (*RecordedCaps, error) {
 }
 
 // knownQueries enumerates caps.json query keys.
-var knownQueries = []string{QueryProgType, QueryHelper, QueryMapType, QueryTCX, QueryFuncSig, QueryFunc, QueryTracepoint, QueryKFields,
+var knownQueries = []string{QueryHelperTarget, QueryProgType, QueryHelper, QueryMapType, QueryTCX, QueryNetkit, QueryFuncSig, QueryFunc, QueryTracepoint, QueryKFields,
 	QueryBTFFeature, QueryArgTag, QueryArch, QueryStructField, QueryKernelSym, QueryFuncParam, QueryUprobeBin, QueryMapField, QueryNullableArgs, QueryTracingHelper,
 	QueryFuncArgs,                                      // Format 3.
 	QueryAttachType, QueryAttachTarget, QueryCtxAccess, // Format 4.
 	QueryTracepointFields, QueryStructOpsMembers, QueryExtTargets, // Format 5.
 	QueryKfuncProtos, QuerySyscallArgs, // Format 8.
-	QueryKfuncLoad, QueryTracepointBuffer, QueryUprobeDebug} // Formats 9 and 10.
+	QueryKfuncLoad, QueryTracepointBuffer, QueryUprobeDebug, // Formats 9 and 10.
+	QueryEnumValues,                               // Format 11.
+	QueryFibLookupFlags,                           // Format 12.
+	QueryKsymVars, QueryKconfig, QueryBTFPresence, // Format 14.
+	QueryFuncRet,     // Format 15.
+	QueryKStructSize, // Format 16 (format 17 adds loader keys only; format 18 is netkit).
+	QuerySleepable}   // Format 19.
 
 // ParseRecordedCaps parses caps bytes; relative binary paths use the current
 // working directory.
@@ -221,8 +304,8 @@ func ParseRecordedCaps(data []byte) (*RecordedCaps, error) {
 		return nil, fmt.Errorf("caps: %w", err)
 	}
 	if err := json.Unmarshal(data, &head); err == nil && !knownRecordedFormat(head.Format) {
-		return nil, &CapsFormatError{Rule: CapsRuleFormatUnknown, Msg: fmt.Sprintf("caps: format %q, want %q (or %q / %q / %q / %q / %q / %q / %q / %q)",
-			head.Format, RecordedFormat, recordedFormatV9, recordedFormatV8, recordedFormatV7, recordedFormatV6, recordedFormatV5, recordedFormatV4, recordedFormatV3, recordedFormatV2)}
+		return nil, &CapsFormatError{Rule: CapsRuleFormatUnknown, Msg: fmt.Sprintf("caps: format %q, want %q (or %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q)",
+			head.Format, RecordedFormat, recordedFormatHelperTarget, recordedFormatNetkit, recordedFormatArena, recordedFormatKStructSize, recordedFormatFuncRet, recordedFormatExternDecls, recordedFormatHiddenDataVars, recordedFormatFibFlags, recordedFormatEnumValues, recordedFormatV10, recordedFormatV9, recordedFormatV8, recordedFormatV7, recordedFormatV6, recordedFormatV5, recordedFormatV4, recordedFormatV3, recordedFormatV2)}
 	}
 	if err := DecodeStrictJSON(data, &c); err != nil { // Reject duplicate/case-mismatched keys, invalid UTF-8, trailing data and depth.
 		return nil, fmt.Errorf("caps: %w", err)
@@ -230,18 +313,47 @@ func ParseRecordedCaps(data []byte) (*RecordedCaps, error) {
 	if c.Format == "ebpf-caps 1" {
 		return nil, fmt.Errorf("caps: format %q is no longer read (the loader's BTF rewrites moved from the query btf_rewrites to the loader declaration's btf_rewrite); record the caps again as %q", c.Format, RecordedFormat)
 	}
+	if err := checkRecordedSleepable(&c); err != nil {
+		return nil, err
+	}
+	if err := checkRecordedNetkit(&c); err != nil {
+		return nil, err
+	}
+	if err := checkRecordedHelperTargets(&c, data); err != nil {
+		return nil, err
+	}
 	hasPrivilegeSplit := splitsPrivileged(c.Format) // Include readable formats 6, 7 and 8.
 	hasTypedAttachQueries := hasPrivilegeSplit || c.Format == recordedFormatV5
 	if !hasTypedAttachQueries && c.Format != recordedFormatV4 && c.Format != recordedFormatV3 && c.Format != recordedFormatV2 {
-		return nil, &CapsFormatError{Rule: CapsRuleFormatUnknown, Msg: fmt.Sprintf("caps: format %q, want %q (or %q / %q / %q / %q / %q / %q / %q / %q)", c.Format, RecordedFormat, recordedFormatV9, recordedFormatV8, recordedFormatV7, recordedFormatV6, recordedFormatV5, recordedFormatV4, recordedFormatV3, recordedFormatV2)}
+		return nil, &CapsFormatError{Rule: CapsRuleFormatUnknown, Msg: fmt.Sprintf("caps: format %q, want %q (or %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q / %q)", c.Format, RecordedFormat, recordedFormatHelperTarget, recordedFormatNetkit, recordedFormatArena, recordedFormatKStructSize, recordedFormatFuncRet, recordedFormatExternDecls, recordedFormatHiddenDataVars, recordedFormatFibFlags, recordedFormatEnumValues, recordedFormatV10, recordedFormatV9, recordedFormatV8, recordedFormatV7, recordedFormatV6, recordedFormatV5, recordedFormatV4, recordedFormatV3, recordedFormatV2)}
 	}
 	// usdt_attach requires caps format 7, just as func_args requires its own
 	// minimum format; earlier records carrying it are invalid.
-	if c.LoaderD != nil && c.LoaderD.USDTAttach != "" && c.Format != RecordedFormat && c.Format != recordedFormatV9 && c.Format != recordedFormatV8 && c.Format != recordedFormatV7 {
+	if c.LoaderD != nil && c.LoaderD.USDTAttach != "" && c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls && c.Format != recordedFormatHiddenDataVars && c.Format != recordedFormatFibFlags && c.Format != recordedFormatEnumValues && c.Format != recordedFormatV10 && c.Format != recordedFormatV9 && c.Format != recordedFormatV8 && c.Format != recordedFormatV7 {
 		return nil, keyNewerFormat("caps: loader key %q is new in %q, but the format is %q", "usdt_attach", recordedFormatV7, c.Format)
 	}
+	// hidden_data_vars requires caps format 13.
+	if c.LoaderD != nil && c.LoaderD.HiddenDataVars != "" && c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls && c.Format != recordedFormatHiddenDataVars {
+		return nil, keyNewerFormat("caps: loader key %q is new in %q, but the format is %q", "hidden_data_vars", recordedFormatHiddenDataVars, c.Format)
+	}
+	// typed_ksym / kconfig require caps format 14.
+	if c.LoaderD != nil && c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls {
+		for _, kv := range c.LoaderD.externDeclKeys() {
+			if kv[1] != "" {
+				return nil, keyNewerFormat("caps: loader key %q is new in %q, but the format is %q", kv[0], recordedFormatExternDecls, c.Format)
+			}
+		}
+	}
+	// arena_cast / arena_premmap require caps format 17.
+	if c.LoaderD != nil && c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena {
+		for _, kv := range c.LoaderD.arenaDeclKeys() {
+			if kv[1] != "" {
+				return nil, keyNewerFormat("caps: loader key %q is new in %q, but the format is %q", kv[0], recordedFormatArena, c.Format)
+			}
+		}
+	}
 	// The four newer loader keys require caps format 8.
-	if c.LoaderD != nil && c.Format != RecordedFormat && c.Format != recordedFormatV9 && c.Format != recordedFormatV8 {
+	if c.LoaderD != nil && c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls && c.Format != recordedFormatHiddenDataVars && c.Format != recordedFormatFibFlags && c.Format != recordedFormatEnumValues && c.Format != recordedFormatV10 && c.Format != recordedFormatV9 && c.Format != recordedFormatV8 {
 		for _, kv := range c.LoaderD.typedFamilyDeclKeys() {
 			if kv[1] != "" {
 				return nil, keyNewerFormat("caps: loader key %q is new in %q, but the format is %q", kv[0], recordedFormatV8, c.Format)
@@ -250,7 +362,7 @@ func ParseRecordedCaps(data []byte) (*RecordedCaps, error) {
 	}
 	// Name a new query's minimum-format violation before checking placement.
 	// Do not raise old queries' meanings to format 9.
-	if c.Format != RecordedFormat && c.Format != recordedFormatV9 {
+	if c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls && c.Format != recordedFormatHiddenDataVars && c.Format != recordedFormatFibFlags && c.Format != recordedFormatEnumValues && c.Format != recordedFormatV10 && c.Format != recordedFormatV9 {
 		for _, q := range []string{QueryKfuncLoad, QueryTracepointBuffer} {
 			_, plain := c.Queries[q]
 			_, privileged := c.PrivilegedQueries[q]
@@ -259,11 +371,53 @@ func ParseRecordedCaps(data []byte) (*RecordedCaps, error) {
 			}
 		}
 	}
-	if c.Format != RecordedFormat {
+	if c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls && c.Format != recordedFormatHiddenDataVars && c.Format != recordedFormatFibFlags && c.Format != recordedFormatEnumValues && c.Format != recordedFormatV10 {
 		_, plain := c.Queries[QueryUprobeDebug]
 		_, privileged := c.PrivilegedQueries[QueryUprobeDebug]
 		if plain || privileged {
-			return nil, keyNewerFormat("caps: query %q is new in %q, but the format is %q", QueryUprobeDebug, RecordedFormat, c.Format)
+			return nil, keyNewerFormat("caps: query %q is new in %q, but the format is %q", QueryUprobeDebug, recordedFormatV10, c.Format)
+		}
+	}
+	// enum_values requires format 11 (or later).
+	if c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls && c.Format != recordedFormatHiddenDataVars && c.Format != recordedFormatFibFlags && c.Format != recordedFormatEnumValues {
+		_, plain := c.Queries[QueryEnumValues]
+		_, privileged := c.PrivilegedQueries[QueryEnumValues]
+		if plain || privileged {
+			return nil, keyNewerFormat("caps: query %q is new in %q, but the format is %q", QueryEnumValues, recordedFormatEnumValues, c.Format)
+		}
+	}
+	// fib_lookup_flags is new in format 12.
+	if c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls && c.Format != recordedFormatHiddenDataVars && c.Format != recordedFormatFibFlags {
+		_, plain := c.Queries[QueryFibLookupFlags]
+		_, privileged := c.PrivilegedQueries[QueryFibLookupFlags]
+		if plain || privileged {
+			return nil, keyNewerFormat("caps: query %q is new in %q, but the format is %q", QueryFibLookupFlags, recordedFormatFibFlags, c.Format)
+		}
+	}
+	// ksym_vars / kconfig / btf_presence are new in format 14.
+	if c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls {
+		for _, q := range []string{QueryKsymVars, QueryKconfig, QueryBTFPresence} {
+			_, plain := c.Queries[q]
+			_, privileged := c.PrivilegedQueries[q]
+			if plain || privileged {
+				return nil, keyNewerFormat("caps: query %q is new in %q, but the format is %q", q, recordedFormatExternDecls, c.Format)
+			}
+		}
+	}
+	// func_ret is new in format 15.
+	if c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet {
+		_, plain := c.Queries[QueryFuncRet]
+		_, privileged := c.PrivilegedQueries[QueryFuncRet]
+		if plain || privileged {
+			return nil, keyNewerFormat("caps: query %q is new in %q, but the format is %q", QueryFuncRet, recordedFormatFuncRet, c.Format)
+		}
+	}
+	// kstruct_size is new in format 16.
+	if c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize {
+		_, plain := c.Queries[QueryKStructSize]
+		_, privileged := c.PrivilegedQueries[QueryKStructSize]
+		if plain || privileged {
+			return nil, keyNewerFormat("caps: query %q is new in %q, but the format is %q", QueryKStructSize, recordedFormatKStructSize, c.Format)
 		}
 	}
 	// Since format 6, dependent queries belong in privileged_queries and
@@ -309,7 +463,7 @@ func ParseRecordedCaps(data []byte) (*RecordedCaps, error) {
 	}
 	// kfunc_protos/syscall_args require format 8.
 	for _, q := range []string{QueryKfuncProtos, QuerySyscallArgs} {
-		if _, ok := c.Queries[q]; ok && c.Format != RecordedFormat && c.Format != recordedFormatV9 && c.Format != recordedFormatV8 {
+		if _, ok := c.Queries[q]; ok && c.Format != RecordedFormat && c.Format != recordedFormatHelperTarget && c.Format != recordedFormatNetkit && c.Format != recordedFormatArena && c.Format != recordedFormatKStructSize && c.Format != recordedFormatFuncRet && c.Format != recordedFormatExternDecls && c.Format != recordedFormatHiddenDataVars && c.Format != recordedFormatFibFlags && c.Format != recordedFormatEnumValues && c.Format != recordedFormatV10 && c.Format != recordedFormatV9 && c.Format != recordedFormatV8 {
 			return nil, keyNewerFormat("caps: query %q is new in %q, but the format is %q", q, recordedFormatV8, c.Format)
 		}
 	}
@@ -364,6 +518,11 @@ func ParseRecordedCaps(data []byte) (*RecordedCaps, error) {
 // HasQuery checks recorded query availability. If ForLoad changes privileges
 // and supplies re-probe caps, dependent-query availability comes from them.
 func (c *RecordedCaps) HasQuery(q string) bool {
+	if q == QueryHelperTarget {
+		if r, err, use := c.helperTargetPrivilege(); !use && err == nil {
+			return reprobeHas(r, q)
+		}
+	}
 	if r, err, use := c.privileged(q); !use && err == nil {
 		return reprobeHas(r, q)
 	}
@@ -484,6 +643,11 @@ func (c *RecordedCaps) HasTCX() (bool, error) {
 // CheckFuncSig key: <function>/<nargs>/<ret>.
 func (c *RecordedCaps) CheckFuncSig(name string, nargs int, ret string) ([]string, error) {
 	return c.diffs(QueryFuncSig, name+"/"+strconv.Itoa(nargs)+"/"+ret)
+}
+
+// CheckFuncRet key: <function>/<ret>.
+func (c *RecordedCaps) CheckFuncRet(name, ret string) ([]string, error) {
+	return c.diffs(QueryFuncRet, name+"/"+ret)
 }
 
 // CheckFunc key: function name.
@@ -677,6 +841,24 @@ func (c *RecordedCaps) AllowsCtxAccess(pt string, ptID int64, at, st, field, mod
 	return c.boolean(QueryCtxAccess, pt+"/"+at+"/"+st+"."+field+"/"+mode+"/"+strconv.Itoa(bytes))
 }
 
+// HasFibLookupFlags key: <program-type>/<program-type-id>/<mask>. Only
+// the exact three-part key answers; another ID or mask is never borrowed.
+func (c *RecordedCaps) HasFibLookupFlags(pt string, ptID int64, mask uint32) (bool, error) {
+	if r, err, use := c.privileged(QueryFibLookupFlags); !use {
+		if err != nil {
+			return false, err
+		}
+		if t, ok := r.(FibLookupFlagsCaps); ok {
+			return t.HasFibLookupFlags(pt, ptID, mask)
+		}
+		return false, noReprobe(QueryFibLookupFlags)
+	}
+	// Only the exact three-part key answers (another ID or
+	// mask is never borrowed). A missing key follows the common rule of answer —
+	// the record does not cover the ELF's question, a precheck error (not Unmet).
+	return c.boolean(QueryFibLookupFlags, FibLookupFlagsKey(pt, ptID, mask))
+}
+
 // CheckTracepointField key: <category>/<event>/<field>/<offset>/<bytes>/<i|u>.
 func (c *RecordedCaps) CheckTracepointField(event, field string, offset, bytes int, sign string) ([]string, error) {
 	key := TPFieldKey(event, field, offset, bytes, sign)
@@ -734,7 +916,7 @@ func (c *RecordedCaps) CheckTracepointBuffer(name, pointee string) ([]string, er
 // its own unsupported-format diagnostic rather than being decoded.
 func knownRecordedFormat(f string) bool {
 	switch f {
-	case RecordedFormat, recordedFormatV9, recordedFormatV8, recordedFormatV7, recordedFormatV6, recordedFormatV5, recordedFormatV4, recordedFormatV3, recordedFormatV2, "ebpf-caps 1":
+	case RecordedFormat, recordedFormatHelperTarget, recordedFormatNetkit, recordedFormatArena, recordedFormatKStructSize, recordedFormatFuncRet, recordedFormatExternDecls, recordedFormatHiddenDataVars, recordedFormatFibFlags, recordedFormatEnumValues, recordedFormatV10, recordedFormatV9, recordedFormatV8, recordedFormatV7, recordedFormatV6, recordedFormatV5, recordedFormatV4, recordedFormatV3, recordedFormatV2, "ebpf-caps 1":
 		return true
 	}
 	return false

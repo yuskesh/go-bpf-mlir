@@ -7,6 +7,7 @@ import (
 
 	"github.com/cilium/ebpf/btf"
 	"github.com/yuskesh/go-bpf-mlir/requirements"
+	"github.com/yuskesh/go-bpf-mlir/internal/bpfmlir/btfexact"
 )
 
 // CheckTracepointBuffer checks only that args[0] is signed i32*.
@@ -19,7 +20,7 @@ func CheckTracepointBuffer(spec *btf.Spec, name, pointee string) ([]string, erro
 		return []string{fmt.Sprintf("tracepoint %s: argument 0 unsupported pointee %s (expected i32)", name, pointee)}, nil
 	}
 	var td *btf.Typedef
-	if err := spec.TypeByName("btf_trace_"+name, &td); err != nil {
+	if err := btfexact.TypeByName(spec, "btf_trace_"+name, &td); err != nil {
 		if errors.Is(err, btf.ErrNotFound) {
 			return []string{fmt.Sprintf("tracepoint %s: argument 0 expected pointee i32; no btf_trace_%s in target BTF", name, name)}, nil
 		}

@@ -2,7 +2,7 @@
 
 # API — bpf and gobpf identifiers
 
-Target: bpf-mlir `v1.20.0` (commit d3e13842). The tables follow what the ebpf-compile of this version accepts and rejects.
+Target: bpf-mlir `v1.21.0` (commit 41b18856). The tables follow what the ebpf-compile of this version accepts and rejects.
 
 The bpf identifiers the frontend accepts (apiTable in `internal/frontend/table.go` — a bpf / gobpf identifier not in the table stops with GB002). Using one outside its "Side" is GB003. Lowering is the bpf-mlir ops emitted on the eBPF side. The description is the first sentence of the bpf doc comment.
 
@@ -1083,6 +1083,7 @@ Every identifier of the gobpf package is user space only (using one on the eBPF 
 | `gobpf.DecodeLE` | DecodeLE reads the little-endian integer at the start of b into *dst (the width is *dst's type — used by the generated Decode; the user does not call it). |
 | `gobpf.Decoder` | Decoder is the generated gobpf_T's Decode (reads by offset — the same shape as bpf-mlir's bindgen). |
 | `gobpf.ErrAlreadyLoaded` | ErrAlreadyLoaded means Load was called twice (before Close). |
+| `gobpf.ErrArenaRequiresOwnedLoader` | ErrArenaRequiresOwnedLoader refuses an ordinary load without arena mapping ownership. |
 | `gobpf.ErrNoObject` | ErrNoObject means there is no embedded object (go generate was not run, or a build for an unsupported GOOS / GOARCH). |
 | `gobpf.ErrReaderClosed` | ErrReaderClosed is returned by a Read after Close (the Reader or the Objects was closed). |
 | `gobpf.ErrUserRingFull` | ErrUserRingFull means the ring has no space at Write (nothing can be written until the eBPF side's Drain advances the consumer). |

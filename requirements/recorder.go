@@ -104,6 +104,16 @@ func (r *Recorder) HasQuery(q string) bool {
 		ok = true
 	case QueryTCX:
 		_, ok = r.under.(TCXCaps)
+	case QuerySleepable:
+		_, ok = r.under.(SleepableCaps)
+	case QueryNetkit:
+		_, ok = r.under.(NetkitCaps)
+	case QueryHelperTarget:
+		_, ok = r.under.(TargetHelperCaps)
+	case QueryKStructSize:
+		_, ok = r.under.(KernelStructSizes)
+	case QueryFuncRet:
+		_, ok = r.under.(KernelFuncRets)
 	case QueryFuncSig:
 		_, ok = r.under.(KernelFuncSigs)
 	case QueryFunc:
@@ -138,6 +148,8 @@ func (r *Recorder) HasQuery(q string) bool {
 		_, ok = r.under.(AttachTargetCaps)
 	case QueryCtxAccess:
 		_, ok = r.under.(CtxAccessCaps)
+	case QueryFibLookupFlags:
+		_, ok = r.under.(FibLookupFlagsCaps)
 	case QueryTracingHelper:
 		_, ok = r.under.(TracingHelperCaps)
 	case QueryTracepointFields:
@@ -152,6 +164,14 @@ func (r *Recorder) HasQuery(q string) bool {
 		_, ok = r.under.(SyscallArgCaps)
 	case QueryKfuncLoad:
 		_, ok = r.under.(KernelKfuncLoadCaps)
+	case QueryEnumValues:
+		_, ok = r.under.(KernelEnumValues)
+	case QueryKsymVars:
+		_, ok = r.under.(KernelKsymVars)
+	case QueryKconfig:
+		_, ok = r.under.(KernelKconfig)
+	case QueryBTFPresence:
+		_, ok = r.under.(BTFPresence)
 	case QueryTracepointBuffer:
 		_, ok = r.under.(TracepointBufferCaps)
 	}
@@ -190,6 +210,11 @@ func (r *Recorder) HasTCX() (bool, error) {
 func (r *Recorder) CheckFuncSig(name string, nargs int, ret string) ([]string, error) {
 	d, err := r.under.(KernelFuncSigs).CheckFuncSig(name, nargs, ret)
 	return r.recDiffs(QueryFuncSig, name+"/"+strconv.Itoa(nargs)+"/"+ret, d, err)
+}
+
+func (r *Recorder) CheckFuncRet(name, ret string) ([]string, error) {
+	d, err := r.under.(KernelFuncRets).CheckFuncRet(name, ret)
+	return r.recDiffs(QueryFuncRet, name+"/"+ret, d, err)
 }
 
 func (r *Recorder) CheckFunc(name string) ([]string, error) {
@@ -321,6 +346,12 @@ func (r *Recorder) HasAttachTarget(at, kind, value string) (bool, error) {
 func (r *Recorder) AllowsCtxAccess(pt string, ptID int64, at, st, field, mode string, bytes int) (bool, error) {
 	v, err := r.under.(CtxAccessCaps).AllowsCtxAccess(pt, ptID, at, st, field, mode, bytes)
 	return r.recBool(QueryCtxAccess, pt+"/"+at+"/"+st+"."+field+"/"+mode+"/"+strconv.Itoa(bytes), v, err)
+}
+
+// HasFibLookupFlags records under the three-part key <type>/<ID>/<mask>.
+func (r *Recorder) HasFibLookupFlags(pt string, ptID int64, mask uint32) (bool, error) {
+	v, err := r.under.(FibLookupFlagsCaps).HasFibLookupFlags(pt, ptID, mask)
+	return r.recBool(QueryFibLookupFlags, FibLookupFlagsKey(pt, ptID, mask), v, err)
 }
 
 // Forward only available queries, as established by capsAs/HasQuery.

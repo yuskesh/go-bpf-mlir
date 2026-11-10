@@ -37,6 +37,35 @@ type LoaderDecl struct {
 	// or none. cilium v0.22's bare section-suffix name fails loudly. Empty
 	// produces blocking ksyscall_loader_unknown.
 	KsyscallAttach string
+	// HiddenDataVars says whether the loader mmaps hidden (STV_HIDDEN) global
+	// variables of a data section: no_mmap or mmap. The kernel refuses
+	// mmap of a map whose record has a kptr (-ENOTSUPP), so a datakptr row needs
+	// no_mmap; mmap blocks with datakptr_loader and empty with
+	// datakptr_loader_unknown. cilium v0.22 creates the .data.<name> map
+	// MMAPABLE but makes no Variable for a hidden symbol, so never mmaps it.
+	HiddenDataVars string
+	// TypedKsym says how the loader resolves a typed ksym VAR: btf_id
+	// (ld_imm64 BPF_PSEUDO_BTF_ID — the verifier types the register from the
+	// VAR's BTF) or kallsyms_addr (the kallsyms address as a plain immediate,
+	// a scalar that bpf_per_cpu_ptr's ARG_PTR_TO_PERCPU_BTF_ID rejects).
+	// kallsyms_addr blocks a ksymvar row with typed_ksym_loader, empty with
+	// typed_ksym_loader_unknown.
+	TypedKsym string
+	// Kconfig says how the loader resolves CONFIG_* externs: weak_zero
+	// (an unset weak extern reads 0, as raw libbpf does) or strong_only (weak
+	// .kconfig externs are refused). strong_only blocks a weak kconfig row with
+	// kconfig_loader, empty with kconfig_loader_unknown.
+	Kconfig string
+	// ArenaCast says whether the loader passes the program's instructions to
+	// the kernel byte for byte (preserve) or rewrites an addr_space_cast
+	// (corrupt). corrupt blocks an arena row with arena_loader, empty with
+	// arena_loader_unknown.
+	ArenaCast string
+	// ArenaPremmap says whether the loader mmaps an arena map at its map_extra
+	// address right after creating it, sharing it with userspace
+	// (create_then_mmap), or does not (none). none blocks an arena row
+	// with arena_loader, empty with arena_loader_unknown.
+	ArenaPremmap string
 }
 
 // Loader declaration values.
@@ -47,6 +76,20 @@ const (
 	ProgLoadBTFID           = "btf_id"
 	KsyscallAttachNone      = "none"
 	KsyscallAttachPrefix    = "prefix"
+	HiddenDataVarsNoMmap    = "no_mmap" // hidden data variables are never mmapped.
+	HiddenDataVarsMmap      = "mmap"
+	TypedKsymBTFID          = "btf_id"        // ld_imm64 BPF_PSEUDO_BTF_ID (raw libbpf).
+	TypedKsymKallsymsAddr   = "kallsyms_addr" // a kallsyms address immediate (cilium v0.22).
+	KconfigWeakZero         = "weak_zero"     // unset weak CONFIG_* reads 0 (raw libbpf).
+	KconfigStrongOnly       = "strong_only"   // weak .kconfig externs are refused (cilium v0.22).
+)
+
+// Arena loader declaration values.
+const (
+	ArenaCastPreserve          = "preserve"         // Instructions reach the kernel byte for byte (libbpf v1.7.0).
+	ArenaCastCorrupt           = "corrupt"          // addr_space_cast is rewritten (cilium v0.22 — U3).
+	ArenaPremmapCreateThenMmap = "create_then_mmap" // mmap(map_extra, MAP_SHARED|MAP_FIXED) right after create (libbpf v1.7.0).
+	ArenaPremmapNone           = "none"             // No mmap at map_extra (cilium v0.22).
 )
 
 // validDeclValues validates loader fields; empty means undeclared.
@@ -61,6 +104,16 @@ func validDeclValue(key, v string) bool {
 		return v == ProgLoadNone || v == ProgLoadBTFID
 	case "ksyscall_attach":
 		return v == KsyscallAttachNone || v == KsyscallAttachPrefix
+	case "hidden_data_vars":
+		return v == HiddenDataVarsNoMmap || v == HiddenDataVarsMmap
+	case "typed_ksym":
+		return v == TypedKsymBTFID || v == TypedKsymKallsymsAddr
+	case "kconfig":
+		return v == KconfigWeakZero || v == KconfigStrongOnly
+	case "arena_cast":
+		return v == ArenaCastPreserve || v == ArenaCastCorrupt
+	case "arena_premmap":
+		return v == ArenaPremmapCreateThenMmap || v == ArenaPremmapNone
 	}
 	return false
 }
@@ -122,21 +175,62 @@ var Cilium022 = LoaderDecl{
 	LSMCgroupLoad:  ProgLoadNone,
 	FsessionLoad:   ProgLoadNone,
 	KsyscallAttach: KsyscallAttachNone,
+	// collection.go:415-417 sets BPF_F_MMAPABLE on every data section by
+	// name, but elf_reader.go:1359-1363 makes no VariableSpec for a hidden symbol
+	// and NewCollection mmaps only Variables (collection.go:285-306).
+	HiddenDataVars: HiddenDataVarsNoMmap,
+	// linker.go:455-519 (resolveKsymReferences) writes the kallsyms
+	// address of a typed ksym into the ld_imm64 immediate without
+	// BPF_PSEUDO_BTF_ID, so the verifier sees a scalar and bpf_per_cpu_ptr's
+	// ARG_PTR_TO_PERCPU_BTF_ID rejects it (verifier.c:8880-8887 in 7.3.1).
+	TypedKsym: TypedKsymKallsymsAddr,
+	// elf_reader.go:779-782 rejects a .kconfig relocation whose symbol is
+	// not STB_GLOBAL, so only strong CONFIG_* externs load.
+	Kconfig: KconfigStrongOnly,
+	// the asm Marshal writes addr_space_cast with its offset 1 as 0,
+	// and 7.1.8 rejects the program with "BPF_MOV uses reserved fields" (seen in
+	// an earlier probe). Map.Memory() mmaps at address 0, while the kernel requires the
+	// exact map_extra address of such an arena (7.1.8 arena.c:454-461), so the
+	// arena is never shared with userspace.
+	ArenaCast:    ArenaCastCorrupt,
+	ArenaPremmap: ArenaPremmapNone,
 }
 
 // LoaderDependentKinds lists outcomes that depend on declarations, covered by
 // corpus cases for each preset: aliases use KprobeAliasPrefix, BTF rewrites use
 // BTFRewrite, USDT uses USDTAttach, sockmap attach_type uses SockmapAttach, and
 // lsm_cgroup/fsession/ksyscall loader outcomes use their corresponding fields.
+// datakptr_loader / _unknown are not here — cilium declares no_mmap (no
+// cilium case yields them); each preset has its own case in bindrt
+// conformance_e615_datakptr_test.go.
+// typed_ksym_loader / kconfig_loader and their _unknown are here — cilium
+// declares kallsyms_addr / strong_only, so a cilium case yields the definite
+// kinds and its bml twin the _unknown ones (bml declares neither).
+// arena_loader / _unknown are here — cilium declares corrupt / none (a
+// cilium case yields arena_loader); bml declares preserve / create_then_mmap,
+// and partial declarations yield arena_loader_unknown (conformance_e640_arena_test.go).
 var LoaderDependentKinds = []string{"attach_alias", "attach_alias_unknown", "btf_rewrite", "usdt_loader", "usdt_loader_unknown",
-	"attach_type", "lsm_cgroup_loader", "lsm_cgroup_loader_unknown", "fsession_loader", "fsession_loader_unknown", "ksyscall_loader", "ksyscall_loader_unknown"}
+	"attach_type", "lsm_cgroup_loader", "lsm_cgroup_loader_unknown", "fsession_loader", "fsession_loader_unknown", "ksyscall_loader", "ksyscall_loader_unknown",
+	"typed_ksym_loader", "typed_ksym_loader_unknown", "kconfig_loader", "kconfig_loader_unknown", "arena_loader", "arena_loader_unknown"}
 
 // BmlLibbpf17 declares the guarded bpf-mlir-loader with pinned libbpf v1.7.0,
 // not raw libbpf, which does not satisfy the section 8 contract. Guards refuse
 // predicted BTF rewrites, so all four features are keep; there is no kprobe
 // alias retry on x86_64. Uprobe paths reopen and missing CO-RE fields poison.
 // USDT remains undeclared and blocks with usdt_loader_unknown until the loader
-// explicitly establishes its behavior.
+// explicitly establishes its behavior. hidden_data_vars is undeclared too
+// (libbpf v1.7.0 rewrites hidden VARs static and does not make such a map
+// MMAPABLE — libbpf.c:3438-3440, :1930-1954, :1992 — but bml has no load record
+// of a hidden data kptr yet), so datakptr rows block with datakptr_loader_unknown.
+// typed_ksym and kconfig are undeclared: bpf-mlir-loader
+// src/load/pre.c:281 rejects any UND symbol ("symbol %s is undefined (extern —
+// libbpf would resolve it)"), so neither btf_id nor weak_zero is inferred from
+// libbpf; ksymvar / kconfig rows block with typed_ksym_loader_unknown /
+// kconfig_loader_unknown.
+// arena_cast / arena_premmap are preserve / create_then_mmap: libbpf
+// v1.7.0 mmaps an arena map at map_extra with MAP_SHARED|MAP_FIXED right after
+// creating it and fails the load otherwise (libbpf.c:5617-5623), and the
+// instructions reach the kernel byte for byte.
 var BmlLibbpf17 = LoaderDecl{
 	Name:                    "bml-libbpf-v1.7",
 	KprobeAliasPrefix:       map[string]string{"x86_64": ""},
@@ -145,6 +239,8 @@ var BmlLibbpf17 = LoaderDecl{
 	BTFRewrite: map[string]string{
 		"func_global": BTFRewriteKeep, "decl_tag": BTFRewriteKeep, "type_tag": BTFRewriteKeep, "enum64": BTFRewriteKeep,
 	},
+	ArenaCast:    ArenaCastPreserve,
+	ArenaPremmap: ArenaPremmapCreateThenMmap,
 }
 
 // Cilium022USDT adds AttachUSDT glue: read notes, populate argument specs and
@@ -210,7 +306,11 @@ const (
 	QueryHelper        = "helper"
 	QueryMapType       = "map_type"
 	QueryTCX           = "tcx"
+	QueryNetkit        = "netkit"
+	QuerySleepable     = "sleepable_types" // <program type>/<attach type> pair loadable with BPF_F_SLEEPABLE.
 	QueryFuncSig       = "func_sig"
+	QueryFuncRet       = "func_ret"     // fexit integer return type without nargs.
+	QueryKStructSize   = "kstruct_size" // byte size of an embedded kernel struct (bpf_cpumask).
 	QueryFunc          = "func"
 	QueryTracepoint    = "tracepoint"
 	QueryKFields       = "kfields"
@@ -225,10 +325,10 @@ const (
 	QueryMapField      = "map_field"
 	QueryNullableArgs  = "nullable_args"
 	QueryTracingHelper = "tracing_helpers"
-	QueryFuncArgs      = "func_args"       // fentry argument types.
+	QueryFuncArgs      = "func_args" // fentry argument types.
 	QueryAttachType    = "attach_types"
 	QueryAttachTarget  = "attach_targets"
-	QueryCtxAccess     = "ctx_access"      // Tracefs event fields, struct_ops members and live replacement targets;
+	QueryCtxAccess     = "ctx_access" // Tracefs event fields, struct_ops members and live replacement targets;
 	// replacement programs are loader inputs and are not recorded.
 	QueryTracepointFields = "tracepoint_fields"
 	QueryStructOpsMembers = "struct_ops_members"
@@ -237,6 +337,13 @@ const (
 	// __do_sys_ BTF are privilege-independent queries.
 	QueryKfuncProtos = "kfunc_protos"
 	QuerySyscallArgs = "syscall_args"
+	// kernel enum constant values (BTF ENUM / ENUM64), privilege-independent.
+	QueryEnumValues = "enum_values"
+	// typed ksym VARs, CONFIG_* values and BTF type / field existence
+	// (vmlinux and module BTF, the kconfig file), privilege-independent.
+	QueryKsymVars    = "ksym_vars"
+	QueryKconfig     = "kconfig"
+	QueryBTFPresence = "btf_presence"
 )
 
 // QuerySet declares optional queries by name. Recorded caps implement all

@@ -178,6 +178,9 @@ var OpaqueSizes = map[string]uint32{"bpf_spin_lock": 4, "bpf_timer": 16}
 const (
 	KptrOpaque        = "kptr"
 	KptrSize   uint32 = 8
+	// CpumaskOpaque tags an embedded cpumask hole: the BTF member is a
+	// STRUCT __ebpf_cpumask_<N> of N bytes and the hole is one _ [N]byte.
+	CpumaskOpaque = "bpf_cpumask"
 )
 
 // kptrTarget extracts T from referenced kptr PTR -> TYPE_TAG kptr -> STRUCT T.
@@ -264,6 +267,16 @@ func compareFields(b *btf, st *btfType, rt reflect.Type, where string) []string 
 			continue
 		}
 		if mt := b.resolve(m.typeID); mt.kind == kindStruct {
+			// an embedded cpumask is one _ [N]byte hole tagged bpf_cpumask (N is the local type's size).
+			if strings.HasPrefix(mt.name, "__ebpf_cpumask_") {
+				out = append(out, checkOpaque(opaque[m.name], m, &btfType{name: CpumaskOpaque, size: mt.size}, mt.size, where)...)
+				delete(opaque, m.name)
+				if _, named := goFields[m.name]; named {
+					out = append(out, fmt.Sprintf("%s.%s: an embedded cpumask is an inaccessible hole in the Go binding — it must not be a named field", where, m.name))
+					delete(goFields, m.name)
+				}
+				continue
+			}
 			if usize, special := OpaqueSizes[mt.name]; special {
 				out = append(out, checkOpaque(opaque[m.name], m, mt, usize, where)...)
 				delete(opaque, m.name)
@@ -691,10 +704,97 @@ func btfRecordTail(kind, vlen uint32) uint32 {
 }
 
 // Global describes schema core.globals; Section is the ELF .rodata/.bss name.
+// Kptr (a kernel struct name, e.g. bpf_cpumask) marks a kptr global of
+// the schema section data:<name> — Section is then .data.<name>, Size 8, and the
+// VAR type must be PTR -> TYPE_TAG kptr -> STRUCT Kptr in a verified dedicated
+// section (KptrDataSectionProblems). Integer globals keep Kptr empty.
 type Global struct {
 	Name, Section string
 	Size          uint32
 	Signed        bool
+	Kptr          string
+}
+
+// stvHidden is STV_HIDDEN (st_other & 3) — debug/elf has no visibility accessor.
+const stvHidden = 2
+
+// KptrDataSectionProblems checks that section sec is the compiler's dedicated
+// kptr section: a .data.<name> section whose every OBJECT symbol is
+// GLOBAL, hidden and 8 bytes, with a BTF DATASEC of the same name whose every
+// VAR is PTR -> TYPE_TAG kptr -> STRUCT and whose VARs and symbols are the same
+// names. Only a section of this shape is left out of the undeclared-global
+// check (GlobalSymbols); hidden rodata/bss globals are checked as before.
+func KptrDataSectionProblems(elfBytes []byte, sec string) ([]string, error) {
+	f, err := elf.NewFile(bytes.NewReader(elfBytes))
+	if err != nil {
+		return nil, err
+	}
+	syms, err := f.Symbols()
+	if err != nil {
+		return nil, fmt.Errorf("the ELF symbol table cannot be read: %w", err)
+	}
+	b, err := parseBTF(elfBytes)
+	if err != nil {
+		return nil, err
+	}
+	return kptrSectionProblems(f, syms, b, sec), nil
+}
+
+func kptrSectionProblems(f *elf.File, syms []elf.Symbol, b *btf, sec string) []string {
+	if n, ok := strings.CutPrefix(sec, ".data."); !ok || n == "" {
+		return []string{fmt.Sprintf("section %s: not a .data.<name> section", sec)}
+	}
+	var problems []string
+	symNames := map[string]bool{}
+	for _, sy := range syms {
+		if elf.ST_TYPE(sy.Info) != elf.STT_OBJECT || int(sy.Section) >= len(f.Sections) || f.Sections[sy.Section].Name != sec {
+			continue
+		}
+		symNames[sy.Name] = true
+		if elf.ST_BIND(sy.Info) != elf.STB_GLOBAL || sy.Other&3 != stvHidden {
+			problems = append(problems, fmt.Sprintf("section %s: symbol %s is not a GLOBAL hidden symbol (bind %v, visibility %d)", sec, sy.Name, elf.ST_BIND(sy.Info), sy.Other&3))
+		}
+		if sy.Size != uint64(KptrSize) {
+			problems = append(problems, fmt.Sprintf("section %s: symbol %s has size %d (a kptr is %d)", sec, sy.Name, sy.Size, KptrSize))
+		}
+	}
+	if len(symNames) == 0 {
+		problems = append(problems, fmt.Sprintf("section %s: the ELF has no OBJECT symbol in it", sec))
+	}
+	var ds *btfType
+	for _, t := range b.types {
+		if t.kind == kindDatasec && t.name == sec {
+			if ds != nil {
+				return append(problems, fmt.Sprintf("section %s: the BTF has two DATASECs of that name", sec))
+			}
+			ds = t
+		}
+	}
+	if ds == nil {
+		return append(problems, fmt.Sprintf("section %s: the BTF has no DATASEC of that name", sec))
+	}
+	varNames := map[string]bool{}
+	for _, si := range ds.secinfo {
+		if int(si.typeID) >= len(b.types) || b.types[si.typeID].kind != kindVar {
+			problems = append(problems, fmt.Sprintf("section %s: DATASEC entry type %d is not a VAR", sec, si.typeID))
+			continue
+		}
+		v := b.types[si.typeID]
+		varNames[v.name] = true
+		if _, ok := b.kptrTarget(v.typeID); !ok {
+			problems = append(problems, fmt.Sprintf("section %s: VAR %s is not PTR -> TYPE_TAG kptr -> STRUCT", sec, v.name))
+		}
+		if !symNames[v.name] {
+			problems = append(problems, fmt.Sprintf("section %s: VAR %s has no OBJECT symbol in the section", sec, v.name))
+		}
+	}
+	for n := range symNames {
+		if !varNames[n] {
+			problems = append(problems, fmt.Sprintf("section %s: symbol %s has no VAR in DATASEC %s", sec, n, sec))
+		}
+	}
+	sort.Strings(problems)
+	return problems
 }
 
 // CheckGlobals independently compares schema, ELF symbols and BTF, returning
@@ -756,7 +856,11 @@ func GlobalProblems(elfBytes []byte, g Global) ([]string, error) {
 }
 
 // GlobalSymbols maps .rodata/.bss GLOBAL OBJECT names to sections for checking
-// undeclared globals.
+// undeclared globals. GLOBAL OBJECT symbols of .data.<name> sections are
+// included too, except those of a section with the verified dedicated kptr shape
+// (KptrDataSectionProblems — no problems), which the loader leaves alone; an
+// integer or non-hidden symbol makes the whole section count as undeclared
+// globals. Hidden .rodata/.bss symbols are included as before.
 func GlobalSymbols(elfBytes []byte) (map[string]string, error) {
 	f, err := elf.NewFile(bytes.NewReader(elfBytes))
 	if err != nil {
@@ -766,12 +870,31 @@ func GlobalSymbols(elfBytes []byte) (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the ELF symbol table cannot be read: %w", err)
 	}
+	var b *btf
+	verified := map[string]bool{}
 	out := map[string]string{}
 	for _, sy := range syms {
 		if elf.ST_TYPE(sy.Info) != elf.STT_OBJECT || elf.ST_BIND(sy.Info) != elf.STB_GLOBAL || int(sy.Section) >= len(f.Sections) {
 			continue
 		}
-		if n := f.Sections[sy.Section].Name; n == ".rodata" || n == ".bss" {
+		n := f.Sections[sy.Section].Name
+		if dn, ok := strings.CutPrefix(n, ".data."); ok && dn != "" {
+			v, seen := verified[n]
+			if !seen {
+				if b == nil {
+					if b, err = parseBTF(elfBytes); err != nil {
+						return nil, err
+					}
+				}
+				v = len(kptrSectionProblems(f, syms, b, n)) == 0
+				verified[n] = v
+			}
+			if !v {
+				out[sy.Name] = n
+			}
+			continue
+		}
+		if n == ".rodata" || n == ".bss" {
 			out[sy.Name] = n
 		}
 	}
@@ -913,6 +1036,20 @@ func checkGlobal(f *elf.File, syms []elf.Symbol, b *btf, rels map[uint32]btfRelo
 	}
 	if sec != nil && uint64(vsi.offset)+uint64(vsi.size) > sec.Size {
 		problems = append(problems, fmt.Sprintf("global %s: the DATASEC range [%d, %d) exceeds the ELF section size %d", g.Name, vsi.offset, vsi.offset+vsi.size, sec.Size))
+	}
+	if g.Kptr != "" { // a kptr global of a dedicated .data.<name> section.
+		if sym.Other&3 != stvHidden {
+			problems = append(problems, fmt.Sprintf("global %s: the kptr symbol is not hidden (visibility %d)", g.Name, sym.Other&3))
+		}
+		if s, ok := b.kptrTarget(b.types[vsi.typeID].typeID); !ok {
+			problems = append(problems, fmt.Sprintf("global %s: the VAR type is not PTR -> TYPE_TAG kptr -> STRUCT", g.Name))
+		} else if s != g.Kptr {
+			problems = append(problems, fmt.Sprintf("global %s: the VAR type is a kptr to %s (declared %s)", g.Name, s, g.Kptr))
+		}
+		for _, p := range kptrSectionProblems(f, syms, b, g.Section) {
+			problems = append(problems, "global "+g.Name+": "+p)
+		}
+		return problems
 	}
 	vt := b.resolve(b.types[vsi.typeID].typeID)
 	if vt.kind != kindInt {
@@ -1089,4 +1226,23 @@ func (b *btf) spellDepth(id uint32, d int) string {
 		return "?enum"
 	}
 	return fmt.Sprintf("?btf_kind_%d", t.kind)
+}
+
+// CpumaskSizes returns the byte sizes of the ELF BTF's embedded-cpumask local
+// types __ebpf_cpumask_<N>, ascending. The kstructsize rows of the same
+// ELF name the same set; the requirements check reads only the rows, so a
+// test compares the two.
+func CpumaskSizes(elfBytes []byte) ([]uint32, error) {
+	b, err := parseBTF(elfBytes)
+	if err != nil {
+		return nil, err
+	}
+	var out []uint32
+	for name, id := range b.structs {
+		if strings.HasPrefix(name, "__ebpf_cpumask_") {
+			out = append(out, b.types[id].size)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
 }

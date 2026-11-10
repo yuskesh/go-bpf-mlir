@@ -2,7 +2,7 @@
 
 # bpf-mlir ops the frontend emits
 
-Target: bpf-mlir `v1.20.0` (commit d3e13842). The tables follow what the ebpf-compile of this version accepts and rejects.
+Target: bpf-mlir `v1.21.0` (commit 41b18856). The tables follow what the ebpf-compile of this version accepts and rejects.
 
 The set of ops the frontend may emit into the generated `.mlir` (allowedOps in `internal/frontend/bpfworld.go` — emitting any other op is a frontend bug, GB015) and the Go forms that emit each op. The meaning of each op is in bpf-mlir's op reference (`docs/reference/ebpf_ops.md` in the bpf-mlir source release).
 

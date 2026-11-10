@@ -2,7 +2,7 @@
 
 # Examples
 
-Target: bpf-mlir `v1.20.0` (commit d3e13842). The tables follow what the ebpf-compile of this version accepts and rejects.
+Target: bpf-mlir `v1.21.0` (commit 41b18856). The tables follow what the ebpf-compile of this version accepts and rejects.
 
 Each example package (`examples/` — each has a `-selftest`) with its program kinds, map kinds and the eBPF-side operations it uses. Built from the frontend's analysis only (independent of ebpf-compile and the kernel).
 

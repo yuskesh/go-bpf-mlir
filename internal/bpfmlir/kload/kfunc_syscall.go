@@ -15,6 +15,7 @@ import (
 	"github.com/cilium/ebpf/btf"
 
 	"github.com/yuskesh/go-bpf-mlir/requirements"
+	"github.com/yuskesh/go-bpf-mlir/internal/bpfmlir/btfexact"
 )
 
 // KfuncSpelling unwraps typedef/const/volatile/type_tag and emits section 3
@@ -86,18 +87,34 @@ func CompareKfuncProto(name string, proto *btf.FuncProto, ret string, args []str
 	return out
 }
 
-// CheckKfunc checks vmlinux FUNC name/FUNC_PROTO. Missing names yield kfunc_sig;
-// unreadable BTF is Unknown. Do not require bpf_kfunc DECL_TAG: the verifier
-// loudly rejects functions that are not registered for use.
+// CheckKfunc checks vmlinux FUNC name/FUNC_PROTO by the complete name (using
+// btfexact, not cilium's essential-name index). No FUNC of the name yields
+// kfunc_sig; two or more, or unreadable BTF, is Unknown. Do not require
+// bpf_kfunc DECL_TAG: the verifier loudly rejects functions that are not
+// registered for use.
 func (LiveCaps) CheckKfunc(name, ret string, args []string) ([]string, error) {
 	spec, err := vmlinux()
 	if err != nil {
 		return nil, fmt.Errorf("target BTF: %v: %w", err, requirements.ErrUnknown)
 	}
+	return checkKfuncIn(spec, name, ret, args)
+}
+
+func checkKfuncIn(spec *btf.Spec, name, ret string, args []string) ([]string, error) {
 	var fn *btf.Func
-	if err := spec.TypeByName(name, &fn); err != nil {
+	if err := btfexact.TypeByName(spec, name, &fn); err != nil {
 		if errors.Is(err, btf.ErrNotFound) {
 			return []string{fmt.Sprintf("kfunc %s is not found in the target BTF (vmlinux)", name)}, nil
+		}
+		if errors.Is(err, btfexact.ErrMultiple) {
+			ts, _ := btfexact.Types(spec, name)
+			n := 0
+			for _, t := range ts {
+				if _, ok := t.(*btf.Func); ok {
+					n++
+				}
+			}
+			return nil, fmt.Errorf("kfunc %s: the target BTF has %d FUNC named %s: %w", name, n, name, requirements.ErrUnknown)
 		}
 		return nil, fmt.Errorf("kfunc %s: %v: %w", name, err, requirements.ErrUnknown)
 	}
@@ -174,12 +191,12 @@ func SyscallTypeSpelling(spec *btf.Spec, typ string) (string, bool) {
 	}
 	if strings.HasPrefix(name, "enum ") {
 		var e *btf.Enum
-		if spec.TypeByName(strings.TrimPrefix(name, "enum "), &e) == nil {
+		if btfexact.TypeByName(spec, strings.TrimPrefix(name, "enum "), &e) == nil {
 			return KfuncSpelling(e, false), true
 		}
 		return "", false
 	}
-	types, err := spec.AnyTypesByName(name)
+	types, err := btfexact.Types(spec, name)
 	if err != nil {
 		return "", false
 	}
@@ -246,7 +263,7 @@ func syscallCharPointerDepth(spec *btf.Spec, typ string) (int, bool) {
 			base = append(base, w)
 		}
 	}
-	types, err := spec.AnyTypesByName(strings.Join(base, " "))
+	types, err := btfexact.Types(spec, strings.Join(base, " "))
 	if err != nil {
 		return 0, false
 	}
@@ -326,7 +343,7 @@ func (LiveCaps) CheckSyscallArg(name string, n int, typ string) ([]string, error
 		return compareSysarg(name, n, typ, args, names, "tracefs format"), nil
 	}
 	var fn *btf.Func
-	if err := spec.TypeByName("__do_sys_"+name, &fn); err == nil {
+	if err := btfexact.TypeByName(spec, "__do_sys_"+name, &fn); err == nil {
 		if proto, ok := fn.Type.(*btf.FuncProto); ok {
 			args, names := make([]string, len(proto.Params)), make([]string, len(proto.Params))
 			for i, p := range proto.Params {

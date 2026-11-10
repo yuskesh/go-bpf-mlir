@@ -49,16 +49,51 @@ type Map struct {
 // member with the declared width and sign.
 type KField struct {
 	Program, Struct, Field string
-	Type                   string // i8..u64, ptr:<struct>, [N]i8/[N]u8 byte arrays, or strptr.
+	Type                   string // i8..u64, ptr:<struct>, ptr:void, struct:T, enum:<bits>, [N]i8/[N]u8 byte arrays, or strptr.
 }
 
 // KFieldStrPtr describes char* to a one-byte integer, read by kernel.read_str
 // through probe_read_kernel_str. Its minimum format version is 15.
 const KFieldStrPtr = "strptr"
 
+// KFieldPtrVoid describes a void * field read by kaddr.read. Its
+// minimum format version is PtrVoidKFieldMinVersion.
+const KFieldPtrVoid = "ptr:void"
+
+// PtrVoidKFieldMinVersion is the minimum format of the kfield ptr:void value
+// (older readers took ptr:<struct> with any name, so ptr:void would
+// have been read as a pointer to a struct named void).
+const PtrVoidKFieldMinVersion = 25
+
+// EnumKFieldMinVersion is the minimum format of kfield enum:<bits> values and
+// the btf feature enum.
+const EnumKFieldMinVersion = 22
+
+// KFieldEnumBits returns the width of an enum:<bits> kfield type, or 0.
+func KFieldEnumBits(t string) int {
+	switch t {
+	case "enum:8":
+		return 8
+	case "enum:16":
+		return 16
+	case "enum:32":
+		return 32
+	case "enum:64":
+		return 64
+	}
+	return 0
+}
+
 // kfieldTypeMinVersion returns the value's minimum format version. strptr needs
-// 15; other values retain the row kind's minimum, 3 (requirements_format.md).
+// 15, enum:<bits> 22; other values retain the row kind's minimum, 3
+// (requirements_format.md).
 func kfieldTypeMinVersion(t string) int {
+	if t == KFieldPtrVoid {
+		return PtrVoidKFieldMinVersion
+	}
+	if KFieldEnumBits(t) != 0 {
+		return EnumKFieldMinVersion
+	}
 	if strings.HasPrefix(t, "struct:") {
 		return 17
 	}
@@ -79,6 +114,11 @@ type Attach struct {
 	// RetNargs < 0 means absent.
 	RetNargs int
 	RetType  string
+	// fexit funcret: integer return type matched without nargs; "" means
+	// absent. An fexit attach carries exactly one of retsig and funcret.
+	FuncRet string `json:",omitempty"` // omitempty: Attach is serialized into the kfunc_loads key (keys of older recordings stay byte-identical).
+	// a sleepable fentry (section fentry.s/<fn>, BPF_F_SLEEPABLE); the sleepable row follows the attach row.
+	Sleepable bool `json:",omitempty"` // omitempty: Attach is serialized into cache keys (keys of older recordings stay byte-identical).
 	// kprobe architecture, fixed-offset pt_regs fields (matched against target
 	// BTF), and argument types matched against target FUNC_PROTO.
 	Arch       string
@@ -152,18 +192,32 @@ type KprobeArg struct {
 
 // Requirements holds the entire section.
 type Requirements struct {
-	Version      int
-	SchemaSHA256 string // Schema file SHA-256, added in format 2; empty in format 1.
-	Programs     []Program
-	Maps         []Map
-	KFields      []KField    // Format 3.
-	Attaches     []Attach    // Format 4.
-	BTFFeatures  []string    // ELF .BTF kinds and func_global in name order, added in format 5.
-	ArgTags      []ArgTag    // Verifier argument-tag dependencies, added in format 6.
-	TailSlots    []TailSlot  // Loader-populated prog_array slots, separate from reachability; format 7.
-	CtxAccesses  []CtxAccess // Context field reads/writes, added in format 9.
-	InnerMaps    []InnerMap  // Inner-map templates in outer-map row order, added in format 12.
-	Kfuncs       []Kfunc     // Called kfunc signatures in row order, added in format 13.
+	Version       int
+	SchemaSHA256  string // Schema file SHA-256, added in format 2; empty in format 1.
+	Programs      []Program
+	HelperTargets []HelperTarget `json:",omitempty"` // Target-specific dependencies; absent preserves older public JSON.
+	Maps          []Map
+	KFields       []KField      // Format 3.
+	Attaches      []Attach      // Format 4.
+	BTFFeatures   []string      // ELF .BTF kinds and func_global in name order, added in format 5.
+	ArgTags       []ArgTag      // Verifier argument-tag dependencies, added in format 6.
+	TailSlots     []TailSlot    // Loader-populated prog_array slots, separate from reachability; format 7.
+	CtxAccesses   []CtxAccess   // Context field reads/writes, added in format 9.
+	InnerMaps     []InnerMap    // Inner-map templates in outer-map row order, added in format 12.
+	Kfuncs        []Kfunc       // Called kfunc signatures in row order, added in format 13.
+	EnumVals      []EnumVal     // Kernel enum constants in row order, added in format 20.
+	CoreEnums     []CoreEnum    // CO-RE enum value relocations in row order, added in format 26.
+	KStructSizes  []KStructSize // Embedded kernel struct sizes, ascending, added in format 28.
+	FibFlags      []FibFlag     // bpf_fib_lookup flag masks, added in format 21.
+	DataKptrs     []string      // .data.<name> sections of hidden kptr globals, added in format 23.
+	Arenas        []string      // Arena map symbols in name order, added in format 29.
+	KsymVars      []KsymVar     // Typed ksym VARs in name order, added in format 24.
+	Kconfigs      []Kconfig     // CONFIG_* externs in name order, added in format 24.
+	Guards        []Guard       // Existence guards numbered 0, 1, …, added in format 24.
+	// KFieldGuards maps a KFields index to its guarded list (format 24);
+	// rows without the suffix are absent.
+	KFieldGuards map[int][]int
+	guardedLines []guardedRow // Guarded-capable rows in document order for the end-of-document binding checks.
 	// Map-field usage is derived by FromELF, not a section row. Parse alone
 	// leaves the three-state result at not_derived.
 	MapFields MapFields
@@ -224,6 +278,20 @@ func Parse(data []byte) (*Requirements, error) {
 		previousPhysicalRow := lastPhysicalRow
 		lastPhysicalRow = f[0]
 		rk, known := rowKind(f[0])
+		// a trailing "guarded <g> …" after the row's own fields. Only
+		// ksymvar and kfield carry it (format 24); on any other kind it is
+		// guard_kind.
+		var guarded []string
+		hasGuarded := false
+		if known && !(f[0] == "map" && r.Version < 2) && len(f) > rk.Fields && f[rk.Fields] == guardedWord {
+			guarded, f, hasGuarded = f[rk.Fields+1:], f[:rk.Fields], true
+			if !GuardedRows[f[0]] && r.Version >= rk.MinVersion { // A row below its own minimum stays min_version (checked below).
+				return nil, perr(n, f[0], RuleGuardKind, "%s line %d: only ksymvar and kfield rows can be guarded, got %q", Section, n, sc.Text())
+			}
+			if r.Version < KsymVarMinVersion {
+				return nil, perr(n, f[0], RuleMinVersion, "%s line %d: the guarded suffix needs version %d", Section, n, KsymVarMinVersion)
+			}
+		}
 		// RowKinds owns field counts. Format-1 map has four; unknown rows provisionally
 		// use four fields and are rejected below.
 		want := 4
@@ -271,6 +339,66 @@ func Parse(data []byte) (*Requirements, error) {
 		}
 		if f[0] == "kfunc" {
 			if err := r.parseKfunc(n, f, sc.Text(), byName); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if f[0] == "helper_target" {
+			if err := r.parseHelperTarget(n, f, sc.Text()); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if f[0] == "kstructsize" {
+			if err := r.parseKStructSize(n, f, sc.Text()); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if f[0] == "coreenum" {
+			if err := r.parseCoreEnum(n, f, sc.Text(), byName); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if f[0] == "enumval" {
+			if err := r.parseEnumVal(n, f, sc.Text(), byName); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if f[0] == "fibflags" {
+			if err := r.parseFibFlags(n, f, sc.Text(), byName); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if f[0] == "datakptr" {
+			if err := r.parseDataKptr(n, f, sc.Text()); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if f[0] == "arena" {
+			if err := r.parseArena(n, f, sc.Text()); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		// typed ksym VARs, CONFIG_* externs and existence guards.
+		switch f[0] {
+		case "ksymvar":
+			if err := r.parseKsymVar(n, f, guarded, hasGuarded, sc.Text()); err != nil {
+				return nil, err
+			}
+			continue
+		case "kconfig":
+			if err := r.parseKconfig(n, f, sc.Text()); err != nil {
+				return nil, err
+			}
+			continue
+		case "guard":
+			if err := r.parseGuard(n, f, sc.Text()); err != nil {
 				return nil, err
 			}
 			continue
@@ -461,6 +589,17 @@ func Parse(data []byte) (*Requirements, error) {
 			if err != nil || f[3] == "" || (fmod && f[3] != "-" && !validIntSpelling(f[3])) {
 				return nil, perr(n, f[0], RuleValue, "%s line %d: farg row out of order or malformed %q", Section, n, sc.Text())
 			}
+			// struct_ops enum arguments are enum:<bits> from format 19. The
+			// ':' keeps them apart from struct names (C identifiers), so an older
+			// object's farg such as enum32 stays a struct name.
+			if strings.HasPrefix(f[3], EnumArgPrefix) {
+				if !sops || !validEnumArgSpelling(f[3]) {
+					return nil, perr(n, f[0], RuleValue, "%s line %d: farg enum type must be enum:8, enum:16, enum:32 or enum:64 after trace_struct_ops, got %q", Section, n, f[3])
+				}
+				if r.Version < EnumArgMinVersion {
+					return nil, perr(n, f[0], RuleMinVersion, "%s line %d: farg type %q needs version %d", Section, n, f[3], EnumArgMinVersion)
+				}
+			}
 			if idx != len(r.Attaches[k].FArgs) {
 				return nil, perr(n, f[0], RuleOrder, "%s line %d: farg row out of order or malformed %q", Section, n, sc.Text())
 			}
@@ -472,7 +611,7 @@ func Parse(data []byte) (*Requirements, error) {
 			k := len(r.Attaches) - 1
 			// struct_ops retsig follows structop and precedes farg; void is also allowed.
 			sops := k >= 0 && r.Attaches[k].AttachType == "trace_struct_ops"
-			if k < 0 || r.Attaches[k].Program != f[1] || (r.Attaches[k].AttachType != "trace_fexit" && r.Attaches[k].AttachType != "trace_fmod_ret" && !sops) || r.Attaches[k].RetNargs >= 0 ||
+			if k < 0 || r.Attaches[k].Program != f[1] || (r.Attaches[k].AttachType != "trace_fexit" && r.Attaches[k].AttachType != "trace_fmod_ret" && !sops) || r.Attaches[k].RetNargs >= 0 || r.Attaches[k].FuncRet != "" ||
 				(sops && (r.Attaches[k].StructOpStruct == "" || len(r.Attaches[k].FArgs) > 0)) {
 				return nil, perr(n, f[0], RuleOrder, "%s line %d: retsig row out of order or malformed %q", Section, n, sc.Text())
 			}
@@ -481,6 +620,32 @@ func Parse(data []byte) (*Requirements, error) {
 				return nil, perr(n, f[0], RuleValue, "%s line %d: retsig row out of order or malformed %q", Section, n, sc.Text())
 			}
 			r.Attaches[k].RetNargs, r.Attaches[k].RetType = na, f[3]
+			continue
+		}
+		// funcret <program> <i|u><bits> follows a trace_fexit attach once,
+		// exclusive with retsig (the program reads the return value through
+		// bpf_get_func_ret, so no nargs is baked into the ELF).
+		if f[0] == "funcret" {
+			k := len(r.Attaches) - 1
+			if k < 0 || r.Attaches[k].Program != f[1] || r.Attaches[k].AttachType != "trace_fexit" || r.Attaches[k].RetNargs >= 0 || r.Attaches[k].FuncRet != "" {
+				return nil, perr(n, f[0], RuleOrder, "%s line %d: funcret row out of order or malformed %q", Section, n, sc.Text())
+			}
+			if !validIntSpelling(f[2]) {
+				return nil, perr(n, f[0], RuleValue, "%s line %d: funcret type must be i8…u64, got %q", Section, n, f[2])
+			}
+			r.Attaches[k].FuncRet = f[2]
+			continue
+		}
+		// sleepable <program> follows a trace_fentry attach once,
+		// directly after it and before any farg row — the program is loaded with
+		// BPF_F_SLEEPABLE (section fentry.s/<fn>). FromELF checks it against the
+		// section name; Check asks the caps for the sleepable type pair.
+		if f[0] == "sleepable" {
+			k := len(r.Attaches) - 1
+			if k < 0 || previousPhysicalRow != "attach" || r.Attaches[k].Program != f[1] || r.Attaches[k].AttachType != "trace_fentry" || r.Attaches[k].Sleepable || len(r.Attaches[k].FArgs) > 0 {
+				return nil, perr(n, f[0], RuleOrder, "%s line %d: sleepable row out of order or malformed %q (want one row directly after the program's trace_fentry attach row)", Section, n, sc.Text())
+			}
+			r.Attaches[k].Sleepable = true
 			continue
 		}
 		// Companion-family rows bind positionally to the immediately preceding attachment.
@@ -531,12 +696,12 @@ func Parse(data []byte) (*Requirements, error) {
 					continue
 				}
 				// Multi targets declare positive N, followed by N mtarget rows. USDT uses
-			// provider:name, each a C identifier.
+				// provider:name, each a C identifier.
 				multiN, multiOK := multiCount(f[3])
 				if !isMultiAttachType(f[2]) {
 					multiN = 0
 				}
-				if f[3] == "" || (f[2] == "tcx" && f[3] != "ingress" && f[3] != "egress") || (isTypedAttachType(f[2]) && !validTypedAttachTarget(f[2], f[3])) ||
+				if f[3] == "" || (f[2] == "tcx" && f[3] != "ingress" && f[3] != "egress") || (f[2] == "netkit" && !validNetkitDirection(f[3])) || (isTypedAttachType(f[2]) && !validTypedAttachTarget(f[2], f[3])) ||
 					(isMultiAttachType(f[2]) && !multiOK) || (f[2] == "usdt" && !validUSDTTarget(f[3])) ||
 					(isSyscallOrLSMCgroupAttachType(f[2]) && !validCName(f[3])) { // trace_lsm_cgroup targets hooks; ksyscall targets unprefixed syscall names.
 					return nil, perr(n, f[0], RuleValue, "%s line %d: bad attach row %q", Section, n, sc.Text())
@@ -581,7 +746,7 @@ func Parse(data []byte) (*Requirements, error) {
 			}
 			c := CtxAccess{f[1], f[2], f[3], f[4], f[5], bytes}
 			// Name-bound rows check dependencies and uniqueness only; emitter owns order.
-		// Each program/field/mode combination occurs once.
+			// Each program/field/mode combination occurs once.
 			for _, p := range r.CtxAccesses {
 				if p.Program == c.Program && p.Struct == c.Struct && p.Field == c.Field && p.Mode == c.Mode {
 					return nil, perr(n, f[0], RuleOrder, "%s line %d: ctxaccess row repeated %q", Section, n, sc.Text())
@@ -602,14 +767,25 @@ func Parse(data []byte) (*Requirements, error) {
 			if _, ok := byName[f[1]]; !ok {
 				return nil, perr(n, f[0], RuleOrder, "%s line %d: kfield for unknown program %q", Section, n, f[1])
 			}
-			if !kfieldTypes[f[4]] && !(strings.HasPrefix(f[4], "ptr:") && len(f[4]) > len("ptr:")) && !validKFieldByteArray(f[4]) && f[4] != KFieldStrPtr && !strings.HasPrefix(f[4], "struct:") {
-				return nil, perr(n, f[0], RuleValue, "%s line %d: kfield type must be i8, u8, i16, u16, i32, u32, i64, u64, ptr:<struct>, [N]i8 / [N]u8 (N 1..64) or strptr, got %q", Section, n, f[4])
+			if !kfieldTypes[f[4]] && !(strings.HasPrefix(f[4], "ptr:") && len(f[4]) > len("ptr:")) && !validKFieldByteArray(f[4]) && f[4] != KFieldStrPtr && !strings.HasPrefix(f[4], "struct:") && KFieldEnumBits(f[4]) == 0 {
+				return nil, perr(n, f[0], RuleValue, "%s line %d: kfield type must be i8, u8, i16, u16, i32, u32, i64, u64, ptr:<struct>, ptr:void, [N]i8 / [N]u8 (N 1..64), strptr or enum:<8|16|32|64>, got %q", Section, n, f[4])
 			}
-			// strptr char* fields require format 15 under the value-specific minimum rule.
+			// strptr char* fields require format 15 and enum:<bits> format 22 under the value-specific minimum rule.
 			if mv := kfieldTypeMinVersion(f[4]); r.Version < mv {
 				return nil, perr(n, f[0], RuleMinVersion, "%s line %d: kfield type %q needs version %d", Section, n, f[4], mv)
 			}
 			r.KFields = append(r.KFields, KField{f[1], f[2], f[3], f[4]})
+			if hasGuarded { // the guarded suffix (bound at the end of the document).
+				gs, err := parseGuardedList(n, f[0], guarded, sc.Text())
+				if err != nil {
+					return nil, err
+				}
+				if r.KFieldGuards == nil {
+					r.KFieldGuards = map[int][]int{}
+				}
+				r.KFieldGuards[len(r.KFields)-1] = gs
+				r.guardedLines = append(r.guardedLines, guardedRow{line: n, ksym: -1, kfield: len(r.KFields) - 1})
+			}
 			continue
 		}
 		id, err := strconv.ParseInt(f[3], 10, 64)
@@ -649,6 +825,11 @@ func Parse(data []byte) (*Requirements, error) {
 	if err := r.checkMultiAndInnerMapPending(0, "", lastMap); err != nil {
 		return nil, err
 	}
+	// every arena map row has its arena row. Format 28 and
+	// earlier documents keep reading without arena rows (no loader check).
+	if err := r.checkArenaRows(); err != nil {
+		return nil, err
+	}
 	if len(r.Programs) == 0 {
 		return nil, perr(0, "", RuleDocument, "%s: no programs", Section)
 	}
@@ -657,6 +838,10 @@ func Parse(data []byte) (*Requirements, error) {
 	}
 	if err := checkKFieldPrefixes(r.KFields); err != nil {
 		return nil, perr(0, "kfield", RuleDocument, "%s", err)
+	}
+	// guarded lists and guard rows bind at the end (guard rows come last).
+	if err := r.checkGuardBindings(); err != nil {
+		return nil, err
 	}
 	return r, sc.Err()
 }
@@ -708,6 +893,9 @@ func FromELF(r io.ReaderAt) (*Requirements, error) {
 	}
 	// Derive map-field usage without failing section parsing. Record failed and
 	// its reason; Check emits map_field_unknown for each record-valued map.
+	if err := checkSleepableSections(f, req); err != nil {
+		return nil, err
+	}
 	req.MapFields = deriveMapFields(r)
 	req.kfuncProfiles = deriveKfuncProfiles(f, req)
 	return req, nil
@@ -951,6 +1139,9 @@ func (u Unmet) Unknown() bool { return strings.HasSuffix(u.Kind, "_unknown") }
 // argument types block too: cilium poisons absent fields but does not check
 // integer widths, so load success alone cannot establish correct reads.
 func (u Unmet) BlocksLoad() bool {
+	if u.Kind == "helper_target_unknown" {
+		return true
+	}
 	return !u.Unknown() || u.Kind == "btf_feature_unknown" || u.Kind == "kfield_unknown" || u.Kind == "attach_unknown" || u.Kind == "arg_nullable_mark_unknown" || u.Kind == "arg_tag_unknown" || u.Kind == "retsig_unknown" ||
 		u.Kind == "arch_unknown" || u.Kind == "ctxfield_unknown" || u.Kind == "kprobearg_unknown" ||
 		u.Kind == "attach_symbol_unknown" || u.Kind == "attach_alias_unknown" || u.Kind == "binary_unknown" || u.Kind == "uprobearg_unknown" ||
@@ -959,7 +1150,15 @@ func (u Unmet) BlocksLoad() bool {
 		u.Kind == "tpfield_unknown" || u.Kind == "ext_target_unknown" || u.Kind == "structop_unknown" || // These Unknown cases can silently read incorrect values.
 		u.Kind == "farg_unknown" || // Unknown fentry argument types block to prevent reading the wrong struct.
 		u.Kind == "usdtarg_unknown" || u.Kind == "usdt_loader_unknown" || // Unknown USDT argument locations or loader attachment strategy block.
-		u.Kind == "kfunc_sig_unknown" || u.Kind == "sysarg_unknown" || u.Kind == "lsm_cgroup_loader_unknown" || u.Kind == "fsession_loader_unknown" || u.Kind == "ksyscall_loader_unknown" // All these cases block under policy 12.
+		u.Kind == "kfunc_sig_unknown" || u.Kind == "sysarg_unknown" || u.Kind == "lsm_cgroup_loader_unknown" || u.Kind == "fsession_loader_unknown" || u.Kind == "ksyscall_loader_unknown" || // All these cases block under policy 12.
+		u.Kind == "enumval_unknown" || // Policy 17: an unconfirmed enum value would silently change the program.
+		u.Kind == "coreenum_unknown" || // Policy 21: an unconfirmed constant may be a poisoned instruction a guard hides from the verifier.
+		u.Kind == "funcret_unknown" || // Policy 22: an unconfirmed return type passes the verifier and reads the value wrong.
+		u.Kind == "kstructsize_unknown" || // Policy 23: an unconfirmed struct size may let a kfunc write past the embedded field.
+		u.Kind == "fibflags_unknown" || // a rejected fib_lookup mask is only seen at run time.
+		u.Kind == "datakptr_loader_unknown" || // an mmap of the kptr section fails the whole load (-ENOTSUPP).
+		u.Kind == "arena_loader_unknown" || // a corrupted addr_space_cast or an unshared arena is unconfirmed.
+		u.Kind == "typed_ksym_loader_unknown" || u.Kind == "ksymvar_unknown" || u.Kind == "kconfig_loader_unknown" || u.Kind == "kconfig_unknown" // an unresolved extern or an unconfirmed guard fails or silently changes the load.
 }
 
 // ErrUnknown indicates an indeterminate capability query, such as no probe.
@@ -993,6 +1192,21 @@ type KernelTypes interface {
 }
 
 // validIntSpelling recognizes retsig integer types i8/u8 through i64/u64.
+// EnumArgPrefix starts a struct_ops enum farg value, enum:<bits>.
+const EnumArgPrefix = "enum:"
+
+// EnumArgMinVersion is the first format with struct_ops enum farg values.
+const EnumArgMinVersion = 19
+
+// validEnumArgSpelling recognizes enum:8 / enum:16 / enum:32 / enum:64.
+func validEnumArgSpelling(s string) bool {
+	switch s {
+	case "enum:8", "enum:16", "enum:32", "enum:64":
+		return true
+	}
+	return false
+}
+
 func validIntSpelling(s string) bool {
 	switch s {
 	case "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64":
@@ -1006,6 +1220,15 @@ func validIntSpelling(s string) bool {
 type KernelFuncSigs interface {
 	// CheckFuncSig matches FUNC name's FUNC_PROTO nargs and integer ret, returning mismatch text.
 	CheckFuncSig(name string, nargs int, ret string) ([]string, error)
+}
+
+// KernelFuncRets optionally matches a BTF FUNC's integer return type without
+// the argument count (funcret rows of fexit programs reading the
+// return value through bpf_get_func_ret). Missing support yields the blocking
+// funcret_unknown.
+type KernelFuncRets interface {
+	// CheckFuncRet matches FUNC name's FUNC_PROTO integer ret, returning mismatch text.
+	CheckFuncRet(name, ret string) ([]string, error)
 }
 
 // KernelFuncArgs optionally matches BTF struct-pointer arguments. Missing
@@ -1172,6 +1395,12 @@ func (u Unmet) String() string {
 		return fmt.Sprintf("program %s reads the return value of kernel function %s through fexit; this check cannot judge its signature (Unknown — it needs the target BTF). Not loading: a wrong signature passes the verifier and reads another argument as the return value", u.Program, u.Name)
 	case "attach_tcx_unknown":
 		return fmt.Sprintf("program %s attaches with tcx (%s); whether the target has tcx cannot be determined (Unknown — %s; the loader decides at attach)", u.Program, u.Name, u.Detail)
+	case "sleepable_type":
+		return fmt.Sprintf("program %s is loaded sleepable (fentry.s/%s) but the target kernel cannot load this program type / attach type pair sleepable (%s)", u.Program, u.Name, u.Detail)
+	case "sleepable_type_unknown":
+		return fmt.Sprintf("program %s is loaded sleepable (fentry.s/%s); whether the target kernel accepts a sleepable program of this type cannot be determined (Unknown — %s; the kernel refuses a bad load loudly)", u.Program, u.Name, u.Detail)
+	case "attach_netkit_unknown":
+		return fmt.Sprintf("program %s attaches with netkit (%s); whether the target has netkit cannot be determined (Unknown — %s; the loader decides at attach)", u.Program, u.Name, u.Detail)
 	case "attach_func_unknown":
 		return fmt.Sprintf("program %s attaches (fentry) to kernel function %s; this check cannot judge whether it exists (Unknown — it needs the target BTF; the loader and the kernel decide at attach)", u.Program, u.Name)
 	case "attach_unknown":
@@ -1244,6 +1473,36 @@ func (u Unmet) String() string {
 		return fmt.Sprintf("program %s accesses ctx field %s, which the target's verifier does not allow for %s", u.Program, u.Name, u.Detail)
 	case "ctx_access_unknown":
 		return fmt.Sprintf("program %s accesses ctx field %s; whether the target's verifier allows it cannot be determined (Unknown — %s). Loading anyway: the verifier rejects a disallowed access loudly", u.Program, u.Name, u.Detail)
+	case "fibflags":
+		return fmt.Sprintf("program %s calls bpf_fib_lookup with flags %s, which the target's helper rejects for %s. Not loading: the helper returns -EINVAL at run time and the verifier does not see it", u.Program, u.Name, u.Detail)
+	case "datakptr_loader":
+		return fmt.Sprintf("section %s holds hidden kptr globals; %s. Not loading: the kernel refuses mmap of a map with a kptr (-ENOTSUPP), failing the load", u.Name, u.Detail)
+	case "datakptr_loader_unknown":
+		return fmt.Sprintf("section %s holds hidden kptr globals; whether the loader mmaps them cannot be determined (Unknown — %s). Not loading: the kernel refuses mmap of a map with a kptr (-ENOTSUPP), failing the load", u.Name, u.Detail)
+	case "arena_loader":
+		return fmt.Sprintf("map %s is a BPF arena; %s. Not loading: the program's addr_space_cast must reach the kernel byte for byte, and the arena must be mmapped at its map_extra address to share it with userspace", u.Name, u.Detail)
+	case "arena_loader_unknown":
+		return fmt.Sprintf("map %s is a BPF arena; whether the loader keeps addr_space_cast intact and mmaps the arena at map_extra cannot be determined (Unknown — %s). Not loading", u.Name, u.Detail)
+	case "typed_ksym_loader":
+		return fmt.Sprintf("the object reads the per-CPU kernel variable %s through bpf_per_cpu_ptr; %s. Not loading: a kallsyms address is a scalar to the verifier, and bpf_per_cpu_ptr needs a BTF-typed pointer (ARG_PTR_TO_PERCPU_BTF_ID)", u.Name, u.Detail)
+	case "typed_ksym_loader_unknown":
+		return fmt.Sprintf("the object reads the per-CPU kernel variable %s; how the loader resolves a typed ksym cannot be determined (Unknown — %s). Not loading: without BPF_PSEUDO_BTF_ID the verifier rejects bpf_per_cpu_ptr", u.Name, u.Detail)
+	case "ksymvar":
+		return fmt.Sprintf("the object reads the per-CPU kernel variable %s; %s. Not loading: an unresolved strong extern fails the load, and a variable of another type is read as the declared slot", u.Name, u.Detail)
+	case "ksymvar_unknown":
+		return fmt.Sprintf("the object reads the per-CPU kernel variable %s; whether the target has it with the declared slot type cannot be determined (Unknown — %s). Not loading", u.Name, u.Detail)
+	case "kconfig_loader":
+		return fmt.Sprintf("the object reads %s; %s. Not loading: the loader refuses a weak .kconfig extern", u.Name, u.Detail)
+	case "kconfig_loader_unknown":
+		return fmt.Sprintf("the object reads %s; how the loader resolves CONFIG_* externs cannot be determined (Unknown — %s). Not loading", u.Name, u.Detail)
+	case "kconfig":
+		return fmt.Sprintf("the object reads %s, which the target's kconfig does not set (%s). Not loading: an unset strong extern fails the load", u.Name, u.Detail)
+	case "kconfig_type":
+		return fmt.Sprintf("the object reads %s, whose kconfig value does not fit the extern (%s). Not loading: the loader rejects the value", u.Name, u.Detail)
+	case "kconfig_unknown":
+		return fmt.Sprintf("the object reads %s; its kconfig value cannot be determined (Unknown — %s). Not loading: a loader that cannot read the kconfig file fails the load, and the value is never guessed", u.Name, u.Detail)
+	case "fibflags_unknown":
+		return fmt.Sprintf("program %s calls bpf_fib_lookup with flags %s; whether the target's helper accepts them cannot be determined (Unknown — %s). Not loading: a rejected mask is only seen at run time", u.Program, u.Name, u.Detail)
 	case "tpfield":
 		return fmt.Sprintf("program %s reads tracepoint field %s: %s", u.Program, u.Name, u.Detail)
 	case "tpfield_unknown":
@@ -1295,6 +1554,26 @@ func (u Unmet) String() string {
 		return fmt.Sprintf("program %s attaches (ksyscall) to syscall %s: %s — not loading", u.Program, u.Name, u.Detail)
 	case "ksyscall_loader_unknown":
 		return fmt.Sprintf("program %s attaches (ksyscall) to syscall %s; where the loader attaches a ksyscall program cannot be determined (Unknown — %s). Not loading", u.Program, u.Name, u.Detail)
+	case "enumval":
+		return fmt.Sprintf("program %s uses the enum constant %s: %s — not loading", u.Program, u.Name, u.Detail)
+	case "enumval_unknown":
+		return fmt.Sprintf("program %s uses the enum constant %s; its value on the target cannot be confirmed (Unknown — %s). Not loading: a different value silently changes what the program does", u.Program, u.Name, u.Detail)
+	case "coreenum":
+		return fmt.Sprintf("program %s reads the enum constant %s through a CO-RE relocation: %s — not loading (the loader would poison the instruction)", u.Program, u.Name, u.Detail)
+	case "coreenum_unknown":
+		return fmt.Sprintf("program %s reads the enum constant %s through a CO-RE relocation; whether the target has it cannot be determined (Unknown — %s). Not loading: an absent constant is a poisoned instruction", u.Program, u.Name, u.Detail)
+	case "funcret":
+		return fmt.Sprintf("program %s reads the return value of kernel function %s through fexit (bpf_get_func_ret): %s — not loading (a wrong width or sign passes the verifier and reads the value wrong)", u.Program, u.Name, u.Detail)
+	case "funcret_unknown":
+		return fmt.Sprintf("program %s reads the return value of kernel function %s through fexit (bpf_get_func_ret); this check cannot judge its return type (Unknown — %s). Not loading: a wrong width or sign passes the verifier and reads the value wrong", u.Program, u.Name, u.Detail)
+	case "helper_target":
+		return fmt.Sprintf("program %s calls helper %s at a typed target: %s — not loading", u.Program, u.Name, u.Detail)
+	case "helper_target_unknown":
+		return fmt.Sprintf("program %s calls helper %s at a typed target; acceptance cannot be determined (Unknown — %s). Not loading", u.Program, u.Name, u.Detail)
+	case "kstructsize":
+		return fmt.Sprintf("the object embeds struct %s (%s bytes): %s — not loading (a kfunc writes the target's struct size and would overwrite the bytes after the field)", kstructName(u.Name), kstructBytes(u.Name), u.Detail)
+	case "kstructsize_unknown":
+		return fmt.Sprintf("the object embeds struct %s (%s bytes); the target's struct size cannot be confirmed (Unknown — %s). Not loading: a larger struct would let a kfunc overwrite the bytes after the field", kstructName(u.Name), kstructBytes(u.Name), u.Detail)
 	}
 	// spec tests require cases above for all UnmetKinds; only unlisted kinds reach here.
 	return fmt.Sprintf("unmet requirement %s: program %s, %s (%s)", u.Kind, u.Program, u.Name, u.Detail)
@@ -1303,7 +1582,10 @@ func (u Unmet) String() string {
 // Check matches requirements against capabilities and returns unmet ones.
 // Query failures return errors, never silently imply support or absence.
 func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
-	var out []Unmet
+	out, targetErr := checkHelperTargets(req, caps)
+	if targetErr != nil {
+		return out, targetErr
+	}
 	for _, p := range req.Programs {
 		ok, err := caps.HasProgType(p.ProgType, p.ProgTypeID)
 		if err != nil {
@@ -1318,6 +1600,9 @@ func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
 		th, thOK := capsAs[TracingHelperCaps](caps, QueryTracingHelper)
 		at := tracingAttach(req, p.Symbol)
 		for _, h := range p.Helpers {
+			if needsHelperTarget(p, h) {
+				continue
+			}
 			var ok bool
 			var err error
 			if thOK && at != "" {
@@ -1340,6 +1625,30 @@ func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
 	// kfunc rows match target BTF FUNC_PROTO signatures.
 	if len(req.Kfuncs) > 0 {
 		u, err := checkKfuncs(req, caps)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u...)
+	}
+	// enumval rows match target BTF enum constant values.
+	if len(req.EnumVals) > 0 {
+		u, err := checkEnumVals(req, caps)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u...)
+	}
+	// coreenum rows check that the target BTF has the constant.
+	if len(req.CoreEnums) > 0 {
+		u, err := checkCoreEnums(req, caps)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u...)
+	}
+	// kstructsize rows check every embedded struct against the target's size.
+	if len(req.KStructSizes) > 0 {
+		u, err := checkKStructSizes(req, caps)
 		if err != nil {
 			return nil, err
 		}
@@ -1374,6 +1683,14 @@ func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
 			}
 			out = append(out, u...)
 			out = append(out, checkProgLoader(a, caps)...)
+			continue
+		}
+		if a.AttachType == "netkit" {
+			u, err := checkNetkit(a, caps)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, u...)
 			continue
 		}
 		// Established missing TCX support blocks; Unknown does not, because attach fails explicitly.
@@ -1453,8 +1770,29 @@ func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
 		}
 		// fexit requires retsig; an attach without it is malformed ELF.
 		if a.AttachType == "trace_fexit" {
+			if a.FuncRet != "" {
+				// the return value read through bpf_get_func_ret — no nargs.
+				kr, ok := capsAs[KernelFuncRets](caps, QueryFuncRet)
+				if !ok {
+					// A wrong width or sign passes the verifier and reads the value wrong.
+					out = append(out, Unmet{Kind: "funcret_unknown", Program: a.Program, Name: a.Target, Detail: "no function return type probe"})
+					continue
+				}
+				diffs, err := kr.CheckFuncRet(a.Target, a.FuncRet)
+				if errors.Is(err, ErrUnknown) {
+					out = append(out, Unmet{Kind: "funcret_unknown", Program: a.Program, Name: a.Target, Detail: err.Error()})
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
+				for _, d := range diffs {
+					out = append(out, Unmet{Kind: "funcret", Program: a.Program, Name: a.Target, Detail: d})
+				}
+				continue
+			}
 			if a.RetNargs < 0 {
-				return nil, fmt.Errorf("program %s: fexit attach row without a retsig row", a.Program)
+				return nil, fmt.Errorf("program %s: fexit attach row without a retsig or funcret row", a.Program)
 			}
 			ks, ok := capsAs[KernelFuncSigs](caps, QueryFuncSig)
 			if !ok {
@@ -1472,6 +1810,15 @@ func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
 				out = append(out, Unmet{Kind: "attach", Program: a.Program, Name: a.Target, Detail: d})
 			}
 			continue
+		}
+		// a sleepable fentry asks the caps for the program type / attach type pair (a false answer
+		// blocks, Unknown does not — the per-function allowlist is the kernel's to refuse loudly).
+		if a.Sleepable {
+			u, err := checkSleepable(a, programTypeOf(req, a.Program), caps)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, u...)
 		}
 		// Match fentry argument types only when farg rows are present.
 		if len(a.FArgs) > 0 {
@@ -1495,7 +1842,7 @@ func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
 		}
 	}
 	// Tracepoint and field queries are independent; recorded caps may contain
-			// only one, though live KernelTypes provides both.
+	// only one, though live KernelTypes provides both.
 	if kt, ok := capsAs[KernelTypes](caps, QueryTracepoint); ok {
 		for _, a := range req.Attaches {
 			if a.AttachType != "trace_raw_tp" {
@@ -1527,8 +1874,18 @@ func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
 			out = append(out, u...)
 		}
 	}
+	// guarded kfield rows are checked one by one after the others.
+	plainKFields := req.KFields
+	if len(req.KFieldGuards) > 0 {
+		plainKFields = nil
+		for i, k := range req.KFields {
+			if _, g := req.KFieldGuards[i]; !g {
+				plainKFields = append(plainKFields, k)
+			}
+		}
+	}
 	if kt, ok := capsAs[KernelTypes](caps, QueryKFields); ok {
-		diffs, err := kt.CheckKFields(req.KFields)
+		diffs, err := kt.CheckKFields(plainKFields)
 		if err != nil {
 			return nil, err
 		}
@@ -1536,9 +1893,16 @@ func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
 			out = append(out, Unmet{Kind: "kfield", Detail: d})
 		}
 	} else {
-		for _, k := range req.KFields {
+		for _, k := range plainKFields {
 			out = append(out, Unmet{Kind: "kfield_unknown", Program: k.Program, Name: k.Struct + "." + k.Field + " (" + k.Type + ")"})
 		}
+	}
+	if len(req.KFieldGuards) > 0 {
+		u, err := checkKFieldsGuarded(req, caps)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u...)
 	}
 	// Unknown BTF features block loading. Loader rewriting depends on both
 	// kernel support and the loader's declared handling of unsupported features.
@@ -1601,6 +1965,33 @@ func Check(req *Requirements, caps Capabilities) ([]Unmet, error) {
 	// Context access checks attach_type (unless '-') and ctx_access.
 	if len(req.CtxAccesses) > 0 {
 		u, err := checkCtxAccesses(req, caps, askedAttachType)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u...)
+	}
+	// bpf_fib_lookup flag masks (false and Unknown block).
+	if len(req.FibFlags) > 0 {
+		u, err := checkFibFlags(req, caps)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u...)
+	}
+	// kptr data sections ask the loader declaration only (both block).
+	out = append(out, checkDataKptrs(req, caps)...)
+	// arena maps ask the loader declarations arena_cast / arena_premmap only (both block).
+	out = append(out, checkArenas(req, caps)...)
+	// typed ksym VARs and CONFIG_* externs (loader declaration, then kernel).
+	if len(req.KsymVars) > 0 {
+		u, err := checkKsymVars(req, caps)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u...)
+	}
+	if len(req.Kconfigs) > 0 {
+		u, err := checkKconfigs(req, caps)
 		if err != nil {
 			return nil, err
 		}
@@ -1672,7 +2063,7 @@ func CheckShared(names []string, reqs []*Requirements) []string {
 		}
 	}
 	// Also compare inner templates for shared outer-map names. Do not compare
-			// pairs where one ELF predates innermap and therefore has no template.
+	// pairs where one ELF predates innermap and therefore has no template.
 	type seenInner struct {
 		from string
 		m    InnerMap

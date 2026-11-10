@@ -1,5 +1,7 @@
 // ebpf-bindgen generates typed cilium/ebpf bindings from the canonical schema:
-//   ebpf-bindgen --schema schema.json --object program.bpf.o --output objects_gen.go
+//
+//	ebpf-bindgen --schema schema.json --object program.bpf.o --output objects_gen.go
+//
 // Generated Go embeds the ELF and needs neither cgo, C sources nor MLIR.
 package main
 
@@ -22,6 +24,8 @@ func main() {
 	objectPath := flag.String("object", "", "BPF ELF with BTF to embed")
 	outputPath := flag.String("output", "", "generated Go file")
 	pkg := flag.String("package", "", "generated Go package name (default: output directory name)")
+	profile := flag.String("profile", "", "binding profile (default or go-arena-owned)")
+	arenaRuntime := flag.String("arena-runtime-import", "", "explicit owned arena runtime import (go-arena-owned only)")
 	flag.Parse()
 
 	if *schemaPath == "" || *objectPath == "" || *outputPath == "" {
@@ -94,6 +98,7 @@ func main() {
 
 	out, err := bindgen.Generate(bindgen.Input{
 		Package: name, SchemaJSON: schema, ObjectPath: rel, SchemaSHA256: hash,
+		Profile: *profile, ArenaRuntimeImport: *arenaRuntime,
 	})
 	if err != nil {
 		die("%v", err)

@@ -18,8 +18,8 @@ How go-bpf-mlir versions are numbered, what stays compatible during v0.x, and wh
 
 Each go-bpf-mlir version is built and tested with one bpf-mlir pair, and the pair changes only in a go-bpf-mlir release (with the pinned commit, the copied packages and the provenance lines of the generated files together):
 
-- **ebpf-compile**: built from the **bpf-mlir v1.20.0 source release** (commit `d3e13842326f4dd2006b2f5528a3c9b6f409caf7`). `go generate` finds it through `EBPF_COMPILE`, and stops with a named error (writing nothing) when ebpf-compile was built from any other commit
-- **bpf-mlir Go packages**: the binding packages of bpf-mlir (bindrt, requirements, layout, livecaps and the packages they use, and ebpf-bindgen) are copied into this module from the same bpf-mlir commit (`d3e13842`), with their import paths under `github.com/yuskesh/go-bpf-mlir`. The Go-free source release does not ship them, and there is no separate bpf-mlir Go module to fetch (see NOTICE)
+- **ebpf-compile**: built from the **bpf-mlir v1.21.0 source release** (commit `41b188568cb36a15d4c185d5f72027267b3fa544`). `go generate` finds it through `EBPF_COMPILE`, and stops with a named error (writing nothing) when ebpf-compile was built from any other commit
+- **bpf-mlir Go packages**: the binding packages of bpf-mlir (bindrt, requirements, layout, livecaps and the packages they use, and ebpf-bindgen) are copied into this module from bpf-mlir commit `ea262bb5` — the release commit `41b18856` plus a cleanup that changes only Go comments and the numbers inside three bindgen error messages (the compiler is identical) — with their import paths under `github.com/yuskesh/go-bpf-mlir`. The Go-free source release does not ship them, and there is no separate bpf-mlir Go module to fetch (see NOTICE)
 - **cilium/ebpf**: upstream main at commit b5a5a86f (the pseudo-version in go.mod). fsession programs need cilium/ebpf's fsession support (#2108), which is not in upstream — with upstream cilium/ebpf, gobpf stops them with a named error
 - **Toolchain**: Go 1.26 or later; LLVM / MLIR 23.1.1 to build ebpf-compile; Linux x86_64
 
@@ -30,6 +30,15 @@ Each go-bpf-mlir version is built and tested with one bpf-mlir pair, and the pai
 - In a release commit: `gobpf.Version` is raised, the generated files are regenerated (provenance line), an entry is added to the version history, and the README and tutorial steps are checked from a new module
 
 ## Version history
+
+### v0.19.0 — the bpf-mlir v1.21.0 pair
+
+- **The pair moves to bpf-mlir v1.21.0** (commit `41b188568cb36a15d4c185d5f72027267b3fa544`). No capability is added: the **public API, the frontend's accepted and rejected programs, and the reason codes (GB000 to GB029) are the same as v0.18.0**
+- **Source of the copied Go packages**: bpf-mlir commit `ea262bb524e666c44b272e19d3893a851164fb0a`, a descendant of the release commit that differs only in Go comments and in the error-message numbers of ebpf-bindgen; the compiler (`41b188568cb36a15d4c185d5f72027267b3fa544`) is unchanged
+- **Generated files**: regenerating all 134 generated packages with the v1.21.0 ebpf-compile changes **no `.mlir`, schema or ELF** — only the provenance lines (compiler hash and version, bpf-mlir commit, `go-bpf-mlir: v0.19.0`)
+- **Frontend tables**: the `sk_skb` rows of the context-access table now include the `sk_skb_verdict` attach point that bpf-mlir v1.21.0 knows (no gobpf directive uses it)
+- **Dependencies**: the bpf-mlir pair above (v1.21.0, commit 41b18856), cilium/ebpf upstream main b5a5a86f, Go 1.26 or later, LLVM / MLIR 23.1.1
+- **Getting it**: `go get github.com/yuskesh/go-bpf-mlir@v0.19.0`, build ebpf-compile from the bpf-mlir v1.21.0 source release ([tutorial](tutorial.md), step 0), then run `go generate` again (only the provenance lines of the generated files change)
 
 ### v0.18.0 — user strings, kernel field paths, split DWARF and uprobe buffers
 
@@ -46,7 +55,7 @@ Each go-bpf-mlir version is built and tested with one bpf-mlir pair, and the pai
 - **Fixed**: the non-root hint after a refused capability probe names the program kinds and their capabilities (root only for tracepoint and ksyscall, CAP_SYS_ADMIN for uprobe / uretprobe / usdt, CAP_PERFMON for the other tracing kinds)
 - **Fixed**: an ebpf-compile stack-limit failure in a function that writes a ring buffer event with `_` padding gets a GB016 naming the padding as the likely cause (name the padding field)
 - **Reason codes**: unchanged (GB000 to GB029)
-- **Dependencies**: unchanged — the bpf-mlir pair above (v1.20.0, commit d3e13842), cilium/ebpf upstream main b5a5a86f, Go 1.26 or later, LLVM / MLIR 23.1.1
+- **Dependencies**: unchanged — the bpf-mlir pair of v0.17.0 (v1.20.0, commit d3e13842), cilium/ebpf upstream main b5a5a86f, Go 1.26 or later, LLVM / MLIR 23.1.1
 - **Getting it**: `go get github.com/yuskesh/go-bpf-mlir@v0.18.0`, then run `go generate` again (only the provenance line of the generated files changes)
 
 ### v0.17.0 — the first public version
