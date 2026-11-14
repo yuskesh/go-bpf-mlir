@@ -12,7 +12,7 @@
 //  4. when the module has third_party/bpf-mlir (the development submodule in the go-bpf-mlir repo), its HEAD commit equals the --version commit
 //
 // The pins are in a pair of files selected by the build tag gobpf_public: pin_dev.go (the development repository — a bpf-mlir commit and
-// the bpf-mlir/go module) and pin_public.go (the public tree — the bpf-mlir v1.20.0 source release, with the bpf-mlir Go packages copied in,
+// the bpf-mlir/go module) and pin_public.go (the public tree — the bpf-mlir source release named in pin_release.go, with the bpf-mlir Go packages copied in,
 // so the module version is the tree itself).
 package toolchain
 

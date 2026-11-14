@@ -2,7 +2,7 @@
 
 # Supported scope
 
-Target: bpf-mlir `v1.21.0` (commit 41b18856). The tables follow what the ebpf-compile of this version accepts and rejects.
+Target: bpf-mlir `v1.22.0` (commit 2bf11230). The tables follow what the ebpf-compile of this version accepts and rejects.
 
 Evidence and status per feature group. **Status**: **supported** = frontend negative examples + a differential or selftest run on 3 kernels (7.1.8 / 6.12.111 / 6.6.157) + a row in the non-root capability matrix; if any of these is missing, **limited** (naming what is missing). Negative examples and example packages are generated from the frontend's analysis; status and limits are maintained by hand, and tests check the evidence behind each status and that the status agrees with the generated columns. The limits and notes of each group are in one place in [notes.md](notes.md).
 

@@ -2,7 +2,7 @@
 
 # API — bpf and gobpf identifiers
 
-Target: bpf-mlir `v1.21.0` (commit 41b18856). The tables follow what the ebpf-compile of this version accepts and rejects.
+Target: bpf-mlir `v1.22.0` (commit 2bf11230). The tables follow what the ebpf-compile of this version accepts and rejects.
 
 The bpf identifiers the frontend accepts (apiTable in `internal/frontend/table.go` — a bpf / gobpf identifier not in the table stops with GB002). Using one outside its "Side" is GB003. Lowering is the bpf-mlir ops emitted on the eBPF side. The description is the first sentence of the bpf doc comment.
 

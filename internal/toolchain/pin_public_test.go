@@ -17,7 +17,7 @@ func fakeCompiler(t *testing.T, line string) string {
 	return p
 }
 
-// The public tree accepts the ebpf-compile of the bpf-mlir v1.20.0 source release, with the module version standing for the copied packages.
+// The public tree accepts the ebpf-compile of the bpf-mlir source release named in pin_release.go, with the module version standing for the copied packages.
 func TestPublicPinAccepts(t *testing.T) {
 	v, err := Check(fakeCompiler(t, "bpf-mlir "+PinnedCompilerVersion+" (commit "+PinnedCompilerCommit+")\\n"), t.TempDir())
 	if err != nil {

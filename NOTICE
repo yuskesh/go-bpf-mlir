@@ -6,10 +6,9 @@ go-bpf-mlir is licensed under Apache-2.0 WITH LLVM-exception. See LICENSE.
 Included source:
 - The Go binding packages of bpf-mlir (bindrt, requirements, layout, livecaps,
   the internal core, kload, tpattach and usdtattach packages, and ebpf-bindgen),
-  copied from bpf-mlir commit ea262bb524e666c44b272e19d3893a851164fb0a (a
-  descendant of the commit of the bpf-mlir v1.21.0 source release, 41b188568cb3…,
-  that differs only in Go comments and error-message numbers; the source release
-  does not ship them) with
+  copied from bpf-mlir commit 2bf112303e42e1a176fc8b248948277ef3dfffc0 (the
+  commit of the bpf-mlir v1.22.0 source release; the source release does not ship
+  them) with
   their import paths rewritten. bpf-mlir is Copyright (c) 2026 Yusuke Shinozaki
   and licensed under Apache-2.0 WITH LLVM-exception.
 

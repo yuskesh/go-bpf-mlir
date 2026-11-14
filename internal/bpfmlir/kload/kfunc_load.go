@@ -34,10 +34,11 @@ var kfuncRecipeProtos = map[string]kfuncRecipeProto{
 type kfuncLoadDeps struct {
 	resolve func(name, ret string, args []string) (int32, error)
 	load    func(*ebpf.ProgramSpec) (io.Closer, error)
+	arena   arenaKfuncDeps // the arena recipe (kfunc_arena.go)
 }
 
-// HasKfuncLoad creates no attach, test-run or map. Refuse unsupported profiles
-// before reading/loading BTF.
+// HasKfuncLoad creates no attach or test run. Only the arena recipe creates a map:
+// one arena map, never mmapped. Refuse unsupported profiles before reading/loading BTF.
 func (LiveCaps) HasKfuncLoad(p requirements.KfuncProfile, name, ret string, args []string) (bool, error) {
 	return forwardKfuncLoad(p, name, ret, args, liveKfuncLoadDeps())
 }
@@ -58,6 +59,7 @@ func liveKfuncLoadDeps() kfuncLoadDeps {
 			p, err := ebpf.NewProgramWithOptions(ps, ebpf.ProgramOptions{LogLevel: ebpf.LogLevelBranch | ebpf.LogLevelStats, LogSizeStart: 1024 * 1024})
 			return kfuncProgramHandle(p, err)
 		},
+		arena: liveArenaKfuncDeps(),
 	}
 }
 
@@ -303,6 +305,9 @@ func loadKfuncProfile(p requirements.KfuncProfile, name, ret string, args []stri
 	ps, err := kfuncInitialSpec(p)
 	if err != nil {
 		return false, err
+	}
+	if isArenaKfunc(name) { // same place as bml's bml_live_kfunc_load: after the initial profile, before the recipe table
+		return loadArenaKfunc(p, name, ret, args, d.arena)
 	}
 	proto, known := kfuncRecipeProtos[name]
 	if !known || proto.ret != ret || !reflect.DeepEqual(proto.args, args) {
