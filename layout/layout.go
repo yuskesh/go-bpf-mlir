@@ -12,6 +12,7 @@ import (
 	"debug/elf"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"strings"
@@ -466,7 +467,7 @@ func compareValues(b *btf, st *btfType, rv reflect.Value, buf []byte, where stri
 			continue
 		}
 		// Recurse per struct element: encoding a struct hole would produce zero
-			// and incorrectly disagree with the input bytes.
+		// and incorrectly disagree with the input bytes.
 		if inner := b.resolve(m.typeID); inner.kind == kindArray && fv.Kind() == reflect.Array && arrayHasStruct(b, inner) {
 			out = append(out, compareArrayValues(b, inner, fv, want, where+"."+name, decodeOnly)...)
 			continue
@@ -708,11 +709,15 @@ func btfRecordTail(kind, vlen uint32) uint32 {
 // the schema section data:<name> — Section is then .data.<name>, Size 8, and the
 // VAR type must be PTR -> TYPE_TAG kptr -> STRUCT Kptr in a verified dedicated
 // section (KptrDataSectionProblems). Integer globals keep Kptr empty.
+// Record (a record name) marks a record global of the schema section data:
+// Section is then .data, Size the record's declared size, and the VAR type
+// must be the STRUCT of that name (the same type the records check reads).
 type Global struct {
 	Name, Section string
 	Size          uint32
 	Signed        bool
 	Kptr          string
+	Record        string
 }
 
 // stvHidden is STV_HIDDEN (st_other & 3) — debug/elf has no visibility accessor.
@@ -901,6 +906,28 @@ func GlobalSymbols(elfBytes []byte) (map[string]string, error) {
 	return out, nil
 }
 
+// HasGlobalObject reports whether the ELF has a GLOBAL OBJECT symbol name in
+// section sec. It is the presence test of a declared record global, whose
+// .data section GlobalSymbols leaves out (undeclared .data globals are not
+// reported).
+func HasGlobalObject(elfBytes []byte, name, sec string) (bool, error) {
+	f, err := elf.NewFile(bytes.NewReader(elfBytes))
+	if err != nil {
+		return false, err
+	}
+	syms, err := f.Symbols()
+	if err != nil {
+		return false, fmt.Errorf("the ELF symbol table cannot be read: %w", err)
+	}
+	for _, sy := range syms {
+		if sy.Name == name && elf.ST_TYPE(sy.Info) == elf.STT_OBJECT && elf.ST_BIND(sy.Info) == elf.STB_GLOBAL &&
+			int(sy.Section) < len(f.Sections) && f.Sections[sy.Section].Name == sec {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // GlobalOffset returns the ELF-symbol section offset, independently compared
 // by bindings against the loader's VariableSpec.
 func GlobalOffset(elfBytes []byte, name string) (uint64, error) {
@@ -957,12 +984,13 @@ func btfRelocs(f *elf.File) (map[uint32]btfReloc, error) {
 
 func checkGlobal(f *elf.File, syms []elf.Symbol, b *btf, rels map[uint32]btfReloc, g Global) []string {
 	var sym *elf.Symbol
+	symIdx := 0 // the selected symbol's table index (f.Symbols starts at table index 1)
 	for i := range syms {
 		if syms[i].Name == g.Name && elf.ST_TYPE(syms[i].Info) == elf.STT_OBJECT {
 			if sym != nil {
 				return []string{fmt.Sprintf("global %s: the ELF has two symbols of that name", g.Name)}
 			}
-			sym = &syms[i]
+			sym, symIdx = &syms[i], i+1
 		}
 	}
 	if sym == nil {
@@ -1003,12 +1031,17 @@ func checkGlobal(f *elf.File, syms []elf.Symbol, b *btf, rels map[uint32]btfRelo
 		problems = append(problems, fmt.Sprintf("global %s: DATASEC %s has size %d (neither 0 nor the ELF section size %d)", g.Name, g.Section, ds.size, sec.Size))
 	}
 	var vsi *varSecinfo
+	nvars := 0
 	for i := range ds.secinfo {
 		if int(ds.secinfo[i].typeID) < len(b.types) {
 			if v := b.types[ds.secinfo[i].typeID]; v.kind == kindVar && v.name == g.Name {
 				vsi = &ds.secinfo[i]
+				nvars++
 			}
 		}
+	}
+	if g.Record != "" && nvars > 1 { // a record global binds to exactly one entry.
+		return append(problems, fmt.Sprintf("global %s: DATASEC %s has %d VARs %s", g.Name, g.Section, nvars, g.Name))
 	}
 	if vsi == nil {
 		return append(problems, fmt.Sprintf("global %s: DATASEC %s has no VAR %s", g.Name, g.Section, g.Name))
@@ -1016,6 +1049,14 @@ func checkGlobal(f *elf.File, syms []elf.Symbol, b *btf, rels map[uint32]btfRelo
 	off := uint64(vsi.offset)
 	if r, ok := rels[vsi.pos]; ok { // Relocatable .o: add the relocation symbol's value.
 		switch {
+		case g.Record != "" && int(r.sym) != symIdx:
+			name := "?"
+			if r.sym != 0 && int(r.sym) <= len(syms) {
+				name = syms[r.sym-1].Name
+			}
+			problems = append(problems, fmt.Sprintf("global %s: the DATASEC offset relocation refers to symbol %s at index %d (the OBJECT symbol is at index %d)", g.Name, name, r.sym, symIdx))
+		case g.Record != "" && syms[r.sym-1].Value > math.MaxUint64-off:
+			problems = append(problems, fmt.Sprintf("global %s: the DATASEC offset %d plus the relocation symbol's value %d overflows", g.Name, vsi.offset, syms[r.sym-1].Value))
 		case r.rtype != rBPF64Abs32 && r.rtype != rBPF64NoDyld32:
 			problems = append(problems, fmt.Sprintf("global %s: the DATASEC offset relocation has type %d (not R_BPF_64_ABS32 / R_BPF_64_NODYLD32)", g.Name, r.rtype))
 		case r.sym == 0 || int(r.sym) > len(syms) || syms[r.sym-1].Name != g.Name:
@@ -1034,7 +1075,11 @@ func checkGlobal(f *elf.File, syms []elf.Symbol, b *btf, rels map[uint32]btfRelo
 	if uint64(vsi.size) != sym.Size {
 		problems = append(problems, fmt.Sprintf("global %s: the DATASEC size is %d (the ELF symbol has %d)", g.Name, vsi.size, sym.Size))
 	}
-	if sec != nil && uint64(vsi.offset)+uint64(vsi.size) > sec.Size {
+	if g.Record != "" { // the effective offset, subtraction-safe.
+		if sec != nil && (off > sec.Size || uint64(vsi.size) > sec.Size-off) {
+			problems = append(problems, fmt.Sprintf("global %s: the DATASEC entry at effective offset %d of size %d exceeds the ELF section size %d", g.Name, off, vsi.size, sec.Size))
+		}
+	} else if sec != nil && uint64(vsi.offset)+uint64(vsi.size) > sec.Size {
 		problems = append(problems, fmt.Sprintf("global %s: the DATASEC range [%d, %d) exceeds the ELF section size %d", g.Name, vsi.offset, vsi.offset+vsi.size, sec.Size))
 	}
 	if g.Kptr != "" { // a kptr global of a dedicated .data.<name> section.
@@ -1052,6 +1097,17 @@ func checkGlobal(f *elf.File, syms []elf.Symbol, b *btf, rels map[uint32]btfRelo
 		return problems
 	}
 	vt := b.resolve(b.types[vsi.typeID].typeID)
+	if g.Record != "" { // a record global: the records check's STRUCT itself.
+		switch id, ok := b.structs[g.Record]; {
+		case vt.kind != kindStruct:
+			problems = append(problems, fmt.Sprintf("global %s: the VAR type (kind %d) is not STRUCT", g.Name, vt.kind))
+		case vt.name != g.Record:
+			problems = append(problems, fmt.Sprintf("global %s: the VAR type is STRUCT %s (declared %s)", g.Name, vt.name, g.Record))
+		case !ok || b.types[id] != vt:
+			problems = append(problems, fmt.Sprintf("global %s: the VAR type is not the STRUCT %s that the records check reads", g.Name, g.Record))
+		}
+		return problems
+	}
 	if vt.kind != kindInt {
 		problems = append(problems, fmt.Sprintf("global %s: the VAR type (kind %d) is not INT", g.Name, vt.kind))
 	} else {

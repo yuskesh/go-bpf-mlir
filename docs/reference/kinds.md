@@ -2,7 +2,7 @@
 
 # Program kinds
 
-Target: bpf-mlir `v1.22.0` (commit 2bf11230). The tables follow what the ebpf-compile of this version accepts and rejects.
+Target: bpf-mlir `v1.23.0` (commit 1a58c8d6). The tables follow what the ebpf-compile of this version accepts and rejects.
 
 The context type of the first parameter decides the program kind (the table in `internal/frontend/ctxkind.go`). The verdict is the constant of the program's last `return` (value → bpf-mlir's verdict spelling). The capabilities a non-root loader needs are in the table of [docs/nonroot.md](../nonroot.md) (one row per kind).
 

@@ -85,7 +85,7 @@ func Points(binary, provider, name string) ([]Point, error) {
 		}
 		pc := p.PC
 		if hasBase && p.Base != 0 { // Apply libbpf-compatible prelink adjustment: actual .stapsdt.base
-		// address minus the note's base.
+			// address minus the note's base.
 			pc = pc + baseAddr - p.Base
 		}
 		off, err := fileOffset(f, pc, true)

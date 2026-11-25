@@ -56,6 +56,10 @@ func (e *LSMCgroupLoadError) Unwrap() error { return e.Errno }
 
 const bpfProgLoad = 5 // UAPI BPF_PROG_LOAD.
 
+// RawLoadObserver, when set, is called with the attach_btf_id and expected_attach_type written into each BPF_PROG_LOAD
+// attribute by the raw loader, just before the syscall. A diagnostic runner uses it to record what the load really passed.
+var RawLoadObserver func(attachBTFID, expectedAttachType uint32)
+
 // LoadLSMCgroup raw-loads lsm_cgroup programs without kfunc calls.
 func LoadLSMCgroup(spec *ebpf.ProgramSpec, maps map[string]*ebpf.Map) (*ebpf.Program, error) {
 	if !IsLSMCgroup(spec) {
@@ -213,6 +217,9 @@ func loadRaw(spec *ebpf.ProgramSpec, maps map[string]*ebpf.Map, elfPath string, 
 			}
 		}
 		le.PutUint32(attr[108:], uint32(btfID)) // attach_btf_id (vmlinux — attach_btf_obj_fd 0)
+		if RawLoadObserver != nil {
+			RawLoadObserver(uint32(btfID), uint32(spec.AttachType))
+		}
 		fd, _, errno := unix.Syscall(unix.SYS_BPF, bpfProgLoad, uintptr(unsafe.Pointer(&attr[0])), unsafe.Sizeof(attr))
 		runtime.KeepAlive(fib)
 		runtime.KeepAlive(lib)

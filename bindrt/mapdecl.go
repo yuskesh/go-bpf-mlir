@@ -87,13 +87,23 @@ type MapDeclOptions struct {
 	AllowUndeclaredGlobals bool `json:"allow_undeclared_globals,omitempty"`
 }
 
-// GlobalDecl uses schema sections rodata/bss and integer spellings u8..i64.
+// GlobalDecl uses schema sections rodata/bss with integer spellings u8..i64,
+// or the section data with Record, a key of the same document's records.
 // The be suffix is accepted but not checked: BTF does not encode endianness.
+// Type and Record are presence-based in maps.json (ParseMapDecls records a
+// present key, whatever its value, including "" and null); a Go caller that
+// builds the struct marks a key present by a non-empty value.
 type GlobalDecl struct {
 	Name    string `json:"name"`
 	Section string `json:"section"`
-	Type    string `json:"type"`
+	Type    string `json:"type,omitempty"`
+	Record  string `json:"record,omitempty"`
+
+	typeKey, recordKey bool // set by ParseMapDecls: the key was present
 }
+
+func (d GlobalDecl) hasType() bool   { return d.typeKey || d.Type != "" }
+func (d GlobalDecl) hasRecord() bool { return d.recordKey || d.Record != "" }
 
 // RecordDecl describes size and members without padding. Members are sorted by
 // offset for comparison. Types are u8..i64, [N]T, record:<T>, kptr:<T>,
@@ -137,6 +147,18 @@ func ParseMapDecls(data []byte) (*MapDecls, error) {
 	if err := requirements.DecodeStrictJSON(data, &d); err != nil {
 		return nil, fmt.Errorf("maps: %w", err)
 	}
+	// Key presence of each globals element, read after the strict decode has
+	// accepted the document (so no error of the strict read changes).
+	var keys struct {
+		Globals []map[string]json.RawMessage `json:"globals"`
+	}
+	if err := json.Unmarshal(data, &keys); err != nil || len(keys.Globals) != len(d.Globals) {
+		return nil, fmt.Errorf("maps: the globals cannot be read again for key presence")
+	}
+	for i, k := range keys.Globals {
+		_, d.Globals[i].typeKey = k["type"]
+		_, d.Globals[i].recordKey = k["record"]
+	}
 	return &d, nil
 }
 
@@ -167,6 +189,9 @@ func (p MapDeclProblem) String() string {
 	case "global":
 		return fmt.Sprintf("global %s: declared %s, but the ELF differs: %s", p.Map, p.Declared, p.ELF)
 	case "global_missing_in_elf":
+		if strings.HasPrefix(p.Declared, "data ") {
+			return fmt.Sprintf("global %s: declared (%s), but the ELF has no such global in .data", p.Map, p.Declared)
+		}
 		return fmt.Sprintf("global %s: declared (%s), but the ELF has no such global in .rodata / .bss", p.Map, p.Declared)
 	case "global_undeclared":
 		return fmt.Sprintf("global %s: the ELF holds it (%s), but it is not declared", p.Map, p.ELF)
@@ -300,7 +325,7 @@ func (p *Parsed) CheckMapDecls(decls []MapDecl, opt MapDeclOptions) error {
 		}
 	}
 	probs = append(probs, p.checkRecords(opt.Records)...)
-	probs = append(probs, p.checkGlobals(opt.Globals, opt.AllowUndeclaredGlobals)...)
+	probs = append(probs, p.checkGlobals(opt.Globals, opt.AllowUndeclaredGlobals, opt.Records)...)
 	if !opt.AllowUndeclared {
 		for _, m := range p.req.Maps {
 			if !seen[m.Symbol] {
@@ -318,7 +343,7 @@ func (p *Parsed) CheckMapDecls(decls []MapDecl, opt MapDeclOptions) error {
 var globalType = regexp.MustCompile(`^([ui])(8|16|32|64)(be)?$`)
 
 // checkGlobals checks non-nil declarations against ELF in name order.
-func (p *Parsed) checkGlobals(decls []GlobalDecl, allowUndeclared bool) []MapDeclProblem {
+func (p *Parsed) checkGlobals(decls []GlobalDecl, allowUndeclared bool, recs map[string]RecordDecl) []MapDeclProblem {
 	if decls == nil {
 		return nil
 	}
@@ -346,9 +371,17 @@ func (p *Parsed) checkGlobals(decls []GlobalDecl, allowUndeclared bool) []MapDec
 		case seen[d.Name]:
 			add(d.Name, "decl", "global declared twice", "")
 			continue
+		case d.Section == "data":
+			seen[d.Name] = true
+			p.checkDataGlobal(d, recs, add)
+			continue
 		case d.Section != "rodata" && d.Section != "bss":
 			seen[d.Name] = true
-			add(d.Name, "decl", fmt.Sprintf("global section %q (want rodata or bss)", d.Section), "")
+			add(d.Name, "decl", fmt.Sprintf("global section %q (want rodata, bss or data)", d.Section), "")
+			continue
+		case d.hasRecord():
+			seen[d.Name] = true
+			add(d.Name, "decl", fmt.Sprintf("global record with section %s", d.Section), "")
 			continue
 		case m == nil:
 			seen[d.Name] = true
@@ -383,6 +416,42 @@ func (p *Parsed) checkGlobals(decls []GlobalDecl, allowUndeclared bool) []MapDec
 		}
 	}
 	return probs
+}
+
+// checkDataGlobal checks a record global of section data (named in records)
+// by the global-layout rules and the VAR's STRUCT. Undeclared .data globals are not
+// reported (GlobalSymbols leaves .data out).
+func (p *Parsed) checkDataGlobal(d GlobalDecl, recs map[string]RecordDecl, add func(m, f, d, e string)) {
+	r, declared := recs[d.Record]
+	switch {
+	case d.hasType():
+		add(d.Name, "decl", "global type with section data", "")
+		return
+	case d.Record == "":
+		add(d.Name, "decl", `global section "data" needs a record`, "")
+		return
+	case !declared:
+		add(d.Name, "decl", fmt.Sprintf("global record %q is not declared in records", d.Record), "")
+		return
+	}
+	spell := "data record:" + d.Record
+	ok, err := layout.HasGlobalObject(p.elf, d.Name, ".data")
+	if err != nil {
+		add(d.Name, "format", "the ELF cannot be read for the global check: "+err.Error(), "")
+		return
+	}
+	if !ok {
+		add(d.Name, "global_missing_in_elf", spell, "")
+		return
+	}
+	ps, err := layout.GlobalProblems(p.elf, layout.Global{Name: d.Name, Section: ".data", Size: r.Size, Record: d.Record})
+	if err != nil {
+		add(d.Name, "format", "the ELF cannot be read for the global check: "+err.Error(), "")
+		return
+	}
+	if len(ps) > 0 {
+		add(d.Name, "global", spell, strings.Join(ps, "; "))
+	}
 }
 
 // Declared member type spelling, accepting the be suffix.
@@ -481,7 +550,7 @@ func normalizeRecord(d RecordDecl) RecordDecl {
 // nestedRecord extracts a record name after removing array prefixes.
 var nestedRecord = regexp.MustCompile(`^(\[[0-9]+\])*record:(.+)$`)
 
-// undeclaredNested returns the first referenced record missing from recs, or ''.
+// undeclaredNested returns the first referenced record missing from recs, or ”.
 func undeclaredNested(d RecordDecl, recs map[string]RecordDecl) string {
 	for _, m := range d.Members {
 		if g := nestedRecord.FindStringSubmatch(m.Type); g != nil {

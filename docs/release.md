@@ -18,8 +18,8 @@ How go-bpf-mlir versions are numbered, what stays compatible during v0.x, and wh
 
 Each go-bpf-mlir version is built and tested with one bpf-mlir pair, and the pair changes only in a go-bpf-mlir release (with the pinned commit, the copied packages and the provenance lines of the generated files together):
 
-- **ebpf-compile**: built from the **bpf-mlir v1.22.0 source release** (commit `2bf112303e42e1a176fc8b248948277ef3dfffc0`). `go generate` finds it through `EBPF_COMPILE`, and stops with a named error (writing nothing) when ebpf-compile was built from any other commit
-- **bpf-mlir Go packages**: the binding packages of bpf-mlir (bindrt, requirements, layout, livecaps and the packages they use, and ebpf-bindgen) are copied into this module from the same bpf-mlir commit `2bf11230` as the source release, with their import paths under `github.com/yuskesh/go-bpf-mlir`. The Go-free source release does not ship them, and there is no separate bpf-mlir Go module to fetch (see NOTICE)
+- **ebpf-compile**: built from the **bpf-mlir v1.23.0 source release** (commit `1a58c8d6ef57262dfaf68989c370925caddc66f9`). `go generate` finds it through `EBPF_COMPILE`, and stops with a named error (writing nothing) when ebpf-compile was built from any other commit
+- **bpf-mlir Go packages**: the binding packages of bpf-mlir (bindrt, requirements, layout, livecaps and the packages they use, and ebpf-bindgen) are copied into this module from the same bpf-mlir commit `1a58c8d6` as the source release, with their import paths under `github.com/yuskesh/go-bpf-mlir`. The Go-free source release does not ship them, and there is no separate bpf-mlir Go module to fetch (see NOTICE)
 - **cilium/ebpf**: upstream main at commit b5a5a86f (the pseudo-version in go.mod). fsession programs need cilium/ebpf's fsession support (#2108), which is not in upstream — with upstream cilium/ebpf, gobpf stops them with a named error
 - **Toolchain**: Go 1.26 or later; LLVM / MLIR 23.1.1 to build ebpf-compile; Linux x86_64
 
@@ -30,6 +30,17 @@ Each go-bpf-mlir version is built and tested with one bpf-mlir pair, and the pai
 - In a release commit: `gobpf.Version` is raised, the generated files are regenerated (provenance line), an entry is added to the version history, and the README and tutorial steps are checked from a new module
 
 ## Version history
+
+### v0.21.0 — the bpf-mlir v1.23.0 pair
+
+- **The pair moves to bpf-mlir v1.23.0** (commit `1a58c8d6ef57262dfaf68989c370925caddc66f9`). No capability is added: the **public API, the frontend's accepted and rejected programs, and the reason codes (GB000 to GB029) are the same as v0.20.0**. bpf-mlir v1.23.0 adds compiler features (borrowed sockets, cgroup storage maps, sysctl readers, sock_ops header options, unix socket address hooks); gobpf does not expose them in this version
+- **Source of the copied Go packages**: the release commit itself (`1a58c8d6`). Compared with v0.20.0 the copied packages gain:
+  - a helper capability check that reads the whole verifier log of the probe. On kernels that print an explanation after the refusal, an unavailable helper is reported as unavailable instead of as a checking error;
+  - layout checks for data record globals in bpf-mlir's map description;
+  - an optional observer hook in the raw loader, unset by default
+- **Generated files**: regenerating all 134 generated packages with the v1.23.0 ebpf-compile changes **no `.mlir`, schema or ELF** — only the provenance lines (compiler hash and version, bpf-mlir commit, `go-bpf-mlir: v0.21.0`)
+- **Dependencies**: the bpf-mlir pair above (v1.23.0, commit 1a58c8d6), cilium/ebpf upstream main b5a5a86f, Go 1.26 or later, LLVM / MLIR 23.1.1
+- **Getting it**: `go get github.com/yuskesh/go-bpf-mlir@v0.21.0`, build ebpf-compile from the bpf-mlir v1.23.0 source release ([tutorial](tutorial.md), step 0), then run `go generate` again (only the provenance lines of the generated files change)
 
 ### v0.20.0 — the bpf-mlir v1.22.0 pair
 

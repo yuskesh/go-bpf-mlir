@@ -58,7 +58,8 @@ func (LiveCaps) HasHelper(_ string, progTypeID int64, _ string, helperID int64) 
 	case ebpf.Extension, ebpf.LSM, ebpf.StructOps, ebpf.Tracing:
 		return false, fmt.Errorf("cilium/ebpf has no helper probe for %v: %w", ebpf.ProgramType(progTypeID), requirements.ErrUnknown)
 	}
-	return have(features.HaveProgramHelper(ebpf.ProgramType(progTypeID), asm.BuiltinFunc(helperID)))
+	// cilium reads only the last five log lines of the probe; helperAnswer reads them all (helperlog.go).
+	return helperAnswer(features.HaveProgramHelper(ebpf.ProgramType(progTypeID), asm.BuiltinFunc(helperID)), helperID)
 }
 
 // Match tracepoint signatures and kernel fields against the target vmlinux BTF.
